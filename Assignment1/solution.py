@@ -30,13 +30,18 @@ class Vehicle:
 
         self.remaining = 60 * (1 - battery_level)
         self.arrival_time = arrival_time
+        self.start_charging_time: float | None = None
 
         # pointers to events that sometimes need to be cancelled
         self.reneging_event = reneging_event
         self.departure_event = departure_event
 
+    def decrease_remaining(self, amount: float) -> None:
+        self.remaining -= amount
+
 class ChargingStationModel:
-    def __init__(self, num_chargers: int = 4):
+    def __init__(self, num_chargers: int = 4, seed: int = 70):
+        random.seed(seed)
         self.num_chargers = num_chargers
         self.num_vehicles = 0 # used for the n in calculating arrival times, battery levels and patience thresholds.
         self.completed_vehicles = 0 # count number of completed vehicles
@@ -57,6 +62,7 @@ class ChargingStationModel:
     def start_charging(self, now: float, car: Vehicle) -> None:
         if car.reneging_event:
             car.reneging_event.cancel()
+        car.start_charging_time = now
         car.departure_event = Departure(now + car.remaining, self, car)
         self.sim.schedule(car.departure_event)
         self.charger_utilisation.update(now, min(self.num_chargers, len(self.queue)) / self.num_chargers)
@@ -75,10 +81,13 @@ class ChargingStationModel:
         print(f"Horizon time: {t} min")
         print(f"Avg. queue length {self.queue_length.mean(t):.4f}")
         print(f"Avg. waiting time {self.waiting_time.mean():.4f}")
+        print(f"Number of reneged vehicles {self.reneging_counter.value}")
         print(f"Reneging fraction {(self.reneging_counter.value / self.num_vehicles):.4f}")
         print(f"Avg. charger utilisation {self.charger_utilisation.mean(t)}")
+        print(f"Number of early departures: {self.early_departure_counter.value}")
         print(f"Early departure fraction {(self.early_departure_counter.value / self.completed_vehicles):.4f}")
-
+        print(f"Number of completed vehicles: {self.completed_vehicles}")
+        print(f"Number of arrived vehicles: {self.num_vehicles}")
 
 class Arrival(Event):
     def __init__(self, time, model: ChargingStationModel):
@@ -87,7 +96,7 @@ class Arrival(Event):
 
     def execute(self, sim: Simulation) -> None:
         m = self.model
-        m.queue_length.update(self.time, len(m.queue))
+        m.queue_length.update(self.time, max(len(m.queue) - 4, 0))
 
         battery_level = battery_level_function(m.num_vehicles)
         patience_threshold = patience_level_function(m.num_vehicles)
@@ -95,12 +104,19 @@ class Arrival(Event):
         new_car = Vehicle(battery_level, self.time) # create new vehicle object
 
         queue_length = len(m.queue)
+
+        for i in range(min(queue_length, m.num_chargers)):
+            current_car = m.queue[i]
+            assert current_car.start_charging_time is not None
+            current_car.decrease_remaining(self.time - current_car.start_charging_time)
+
         if queue_length < m.num_chargers:
             m.start_charging(self.time, new_car) # if chargers available, start charging
         else:
             if queue_length % 5 == 0: # if queue length is a multiple of 5, check for early departures
                 for car in m.queue:
-                    if random.randint(0,4) != 0: continue # cars have a probability of 0.2 to leave early
+                    if car.remaining > 15: continue # only check cars that have a remaining time of less than 15 minutes
+                    if random.random() > 0.2: continue # cars have a probability of 0.2 to leave early
                     if car.departure_event:
                         if car.departure_event.is_early: continue # do not cancel/override other early departures
                         car.departure_event.cancel()
@@ -130,7 +146,7 @@ class Departure(Event):
             return
         m = self.model
         #update queue statistic
-        m.queue_length.update(self.time, len(m.queue))
+        m.queue_length.update(self.time, max(len(m.queue) - 4, 0))
 
         #actually remove car from queue and start charging next car
         if self.car in m.queue:
