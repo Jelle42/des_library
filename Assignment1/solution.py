@@ -100,7 +100,7 @@ class Arrival(Event):
 
         m.insert_vehicle(new_car) # add vehicle to queue
 
-        next_arrival_time = 15 * (1 + math.sin(m.num_vehicles * math.pi / 12))**2 + 2
+        next_arrival_time = arrival_time_function(m.num_vehicles)
 
         sim.schedule(Arrival(self.time + next_arrival_time, m)) # schedule new arrival
 
