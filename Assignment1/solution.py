@@ -68,12 +68,8 @@ class ChargingStationModel:
         self.charger_utilisation.update(now, min(self.num_chargers, len(self.queue)) / self.num_chargers)
 
     def run(self):
-        self.sim.schedule(Arrival(0.0, self))
-        
-        def stopping_condition(sim: Simulation, model: ChargingStationModel = self, threshold: int = 800) -> bool:
-            return model.completed_vehicles >= threshold
-    
-        self.sim.run(stop_condition=stopping_condition)
+        self.sim.schedule(Arrival(0.0, self))   
+        self.sim.run()
     
     def report(self):
         t = self.sim.current_time
@@ -151,13 +147,17 @@ class Departure(Event):
         #actually remove car from queue and start charging next car
         if self.car in m.queue:
             m.queue.remove(self.car)
+        m.completed_vehicles += 1
         m.queue_length.update(self.time, len(m.queue))
         m.waiting_time.record(self.time - self.car.arrival_time)
 
         if len(m.queue) >= m.num_chargers:
             m.start_charging(self.time, m.queue[m.num_chargers - 1]) # start charging next person
-        m.completed_vehicles += 1
+
         if self.is_early: m.early_departure_counter.increment()
+
+        if m.completed_vehicles >= 800:
+            m.sim.stop()
 
 class Renege(Event):
     def __init__(self, time, model: ChargingStationModel, car: Vehicle):
