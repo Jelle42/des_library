@@ -10,6 +10,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 from des_library import Simulation, Event, TimeWeightedStatistic, SampleStatistic, Counter
 
+def arrival_time_function(n: int) -> float:
+    return 15 * (1 + math.sin(n * math.pi / 12))**2 + 2
+
+def battery_level_function(n: int) -> float:
+    return 0.5 * abs(math.sin(n * math.pi / 7) + 1)
+
+def patience_level_function(n: int) -> float:
+    return 20 * (1 + abs(math.cos(n * math.e)))
+
 class Vehicle:
     def __init__(
             self,
@@ -67,8 +76,8 @@ class Arrival(Event):
         m = self.model
         m.queue_length.update(self.time, len(m.queue))
 
-        battery_level = 0.5 * abs(math.sin(m.num_vehicles * math.pi / 7) + 1)
-        patience_threshold = 20 * (1 + abs(math.cos(m.num_vehicles * math.e)))
+        battery_level = battery_level_function(m.num_vehicles)
+        patience_threshold = patience_level_function(m.num_vehicles)
 
         new_car = Vehicle(battery_level, self.time) # create new vehicle object
 
