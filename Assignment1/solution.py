@@ -27,8 +27,10 @@ class Vehicle:
             reneging_event: Renege | None = None,
             departure_event: Departure | None = None,
         ):
+
         self.remaining = 60 * (1 - battery_level)
         self.arrival_time = arrival_time
+
         # pointers to events that sometimes need to be cancelled
         self.reneging_event = reneging_event
         self.departure_event = departure_event
@@ -57,6 +59,7 @@ class ChargingStationModel:
             car.reneging_event.cancel()
         car.departure_event = Departure(now + car.remaining, self, car)
         self.sim.schedule(car.departure_event)
+        self.charger_utilisation.update(now, min(self.num_chargers, len(self.queue)) / self.num_chargers)
 
     def run(self):
         self.sim.schedule(Arrival(0.0, self))
@@ -65,6 +68,16 @@ class ChargingStationModel:
             return model.completed_vehicles >= threshold
     
         self.sim.run(stop_condition=stopping_condition)
+    
+    def report(self):
+        t = self.sim.current_time
+        print("Charging station model")
+        print(f"Horizon time: {t} min")
+        print(f"Avg. queue length {self.queue_length.mean(t):.4f}")
+        print(f"Avg. waiting time {self.waiting_time.mean():.4f}")
+        print(f"Reneging fraction {(self.reneging_counter.value / self.num_vehicles):.4f}")
+        print(f"Avg. charger utilisation {self.charger_utilisation.mean(t)}")
+        print(f"Early departure fraction {(self.early_departure_counter.value / self.completed_vehicles):.4f}")
 
 
 class Arrival(Event):
@@ -82,21 +95,22 @@ class Arrival(Event):
         new_car = Vehicle(battery_level, self.time) # create new vehicle object
 
         queue_length = len(m.queue)
-        if queue_length < 4:
-            m.start_charging(self.time, new_car)
+        if queue_length < m.num_chargers:
+            m.start_charging(self.time, new_car) # if chargers available, start charging
         else:
-            if queue_length % 5 == 0:
+            if queue_length % 5 == 0: # if queue length is a multiple of 5, check for early departures
                 for car in m.queue:
-                    if random.randint(1,5) != 1: continue
+                    if random.randint(0,4) != 0: continue # cars have a probability of 0.2 to leave early
                     if car.departure_event:
-                        if car.departure_event.is_early: continue # do not cancel early departures
+                        if car.departure_event.is_early: continue # do not cancel/override other early departures
                         car.departure_event.cancel()
                     early_departure = Departure(self.time + 2, m, car, True)
                     car.departure_event = early_departure
-                    
+                    sim.schedule(early_departure)
+
             reneging_event = Renege(self.time + patience_threshold, m, new_car)
             new_car.reneging_event = reneging_event
-            m.sim.schedule(reneging_event) # schedule renege
+            m.sim.schedule(reneging_event) # schedule reneging
 
         m.insert_vehicle(new_car) # add vehicle to queue
 
@@ -119,9 +133,15 @@ class Departure(Event):
         m.queue_length.update(self.time, len(m.queue))
 
         #actually remove car from queue and start charging next car
-        m.queue.remove(self.car)
-        m.start_charging(self.time, m.queue[m.num_chargers - 1])
+        if self.car in m.queue:
+            m.queue.remove(self.car)
+        m.queue_length.update(self.time, len(m.queue))
+        m.waiting_time.record(self.time - self.car.arrival_time)
+
+        if len(m.queue) >= m.num_chargers:
+            m.start_charging(self.time, m.queue[m.num_chargers - 1]) # start charging next person
         m.completed_vehicles += 1
+        if self.is_early: m.early_departure_counter.increment()
 
 class Renege(Event):
     def __init__(self, time, model: ChargingStationModel, car: Vehicle):
@@ -135,6 +155,9 @@ class Renege(Event):
         m = self.model
         if self.car in m.queue:
             m.queue.remove(self.car)
-        else:
-            return
-        m.completed_vehicles += 1
+        m.reneging_counter.increment()
+
+if __name__ == "__main__":
+    model = ChargingStationModel(4)
+    model.run()
+    model.report()
