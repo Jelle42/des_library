@@ -40,7 +40,8 @@ class Vehicle:
         self.remaining -= amount
 
 class ChargingStationModel:
-    def __init__(self, num_chargers: int = 4, seed: int = 70):
+    def __init__(self, num_chargers: int = 4, seed: int = 42):
+        assert num_chargers > 0, "You should have more than 0 chargers"
         random.seed(seed)
         self.num_chargers = num_chargers
         self.num_vehicles = 0 # used for the n in calculating arrival times, battery levels and patience thresholds.
@@ -67,8 +68,15 @@ class ChargingStationModel:
         car.departure_event = Departure(now + car.remaining, self, car)
         self.sim.schedule(car.departure_event)
 
+    def update_charging_progress(self, now: float) -> None:
+        for car in self.queue[:self.num_chargers]:
+            assert car.last_update_time is not None
+            elapsed = now - car.last_update_time
+            car.remaining -= elapsed
+            car.last_update_time = now
+
     def run(self):
-        self.sim.schedule(Arrival(0.0, self))   
+        self.sim.schedule(Arrival(0.0, self))
         self.sim.run()
     
     def report(self):
@@ -97,18 +105,14 @@ class Arrival(Event):
         busy = min(len(m.queue), m.num_chargers)
         m.charger_utilisation.update(self.time, busy / m.num_chargers)
 
-        battery_level = battery_level_function(m.num_vehicles)
-        patience_threshold = patience_level_function(m.num_vehicles)
+        battery_level = battery_level_function(m.num_vehicles + 1)
+        patience_threshold = patience_level_function(m.num_vehicles + 1)
 
         new_car = Vehicle(battery_level, self.time) # create new vehicle object
 
         queue_length = len(m.queue)
 
-        for car in m.queue[:m.num_chargers]:
-            assert car.last_update_time is not None
-            elapsed = self.time - car.last_update_time
-            car.remaining -= elapsed
-            car.last_update_time = self.time
+        m.update_charging_progress(self.time)
 
         if queue_length < m.num_chargers:
             m.start_charging(self.time, new_car) # if chargers available, start charging
@@ -150,18 +154,15 @@ class Departure(Event):
         busy = min(len(m.queue), m.num_chargers)
         m.charger_utilisation.update(self.time, busy / m.num_chargers)
 
-        for car in m.queue[:m.num_chargers]:
-            if car.last_update_time is not None:
-                elapsed = self.time - car.last_update_time
-                car.remaining -= elapsed
-                car.last_update_time = self.time
-        #update queue statistic
-        m.queue_length.update(self.time, max(len(m.queue) - m.num_chargers, 0))
+        m.update_charging_progress(self.time)
 
         #actually remove car from queue and start charging next car
         if self.car in m.queue:
             m.queue.remove(self.car)
         m.completed_vehicles += 1
+
+        assert self.car.start_charging_time is not None
+
         m.queue_length.update(self.time, max(len(m.queue) - m.num_chargers, 0))
         m.waiting_time.record(self.car.start_charging_time - self.car.arrival_time)
 
@@ -187,17 +188,14 @@ class Renege(Event):
         busy = min(len(m.queue), m.num_chargers)
         m.charger_utilisation.update(self.time, busy / m.num_chargers)
 
-        for car in m.queue[:m.num_chargers]:
-            if car.last_update_time is not None:
-                elapsed = self.time - car.last_update_time
-                car.remaining -= elapsed
-                car.last_update_time = self.time
+        m.update_charging_progress(self.time)
+
         if self.car in m.queue:
             m.queue.remove(self.car)
         m.reneging_counter.increment()
         m.queue_length.update(self.time, max(len(m.queue) - m.num_chargers, 0))
 
 if __name__ == "__main__":
-    model = ChargingStationModel(4)
+    model = ChargingStationModel(4, 70)
     model.run()
     model.report()
