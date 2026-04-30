@@ -13,7 +13,7 @@ def arrival_time_function(n: int) -> float:
     return 15 * (1 + math.sin(n * math.pi / 12))**2 + 2
 
 def battery_level_function(n: int) -> float:
-    return 0.5 * abs(math.sin(n * math.pi / 7) + 1)
+    return 0.5 * abs(math.sin(n * math.pi / 7 + 1))
 
 def patience_level_function(n: int) -> float:
     return 20 * (1 + abs(math.cos(n * math.e)))
@@ -137,6 +137,7 @@ class Arrival(Event):
                 car.departure_event = early_departure
                 sim.schedule(early_departure)
 
+        m.queue_length.update(self.time, len(m.queue))
         next_arrival_time = arrival_time_function(m.num_vehicles)
 
         sim.schedule(Arrival(self.time + next_arrival_time, m)) # schedule new arrival
@@ -153,6 +154,7 @@ class Departure(Event):
             return
 
         m = self.model
+        m.queue_length.update(self.time, len(m.queue))
 
         busy = len(m.currently_charging)
         m.charger_utilisation.update(self.time, busy / m.num_chargers)
@@ -165,12 +167,13 @@ class Departure(Event):
 
         assert self.car.start_charging_time is not None
 
-        m.queue_length.update(self.time, len(m.queue))
         m.waiting_time.record(self.car.start_charging_time - self.car.arrival_time)
 
         if len(m.queue) > 0:
             car = m.queue.pop(0)
             m.start_charging(self.time, car)
+
+        m.queue_length.update(self.time, len(m.queue))
 
         if self.is_early: m.early_departure_counter.increment()
 
@@ -187,6 +190,8 @@ class Renege(Event):
         if self.cancelled:
             return
         m = self.model
+
+        m.queue_length.update(self.time, len(m.queue))
 
         busy = min(len(m.currently_charging), m.num_chargers)
         m.charger_utilisation.update(self.time, busy / m.num_chargers)
