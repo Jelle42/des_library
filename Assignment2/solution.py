@@ -85,7 +85,7 @@ class TransactionArrival(Event):
         sim.schedule(expiry)
 
         next_arrival = random.expovariate(m.transaction_arrival_rate)
-        sim.schedule(TransactionArrival(next_arrival, m))
+        sim.schedule(TransactionArrival(self.time + next_arrival, m))
 
 class Expire(Event):
     def __init__(self, time: float, model: GasMarket, transaction: Transaction) -> None:
