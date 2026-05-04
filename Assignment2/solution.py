@@ -32,6 +32,13 @@ class GasMarket:
         self.pi: float = 2
 
         self.T_exp = 300
+
+        #statistics to keep track of
+        self.confirmation_time = SampleStatistic()
+        self.mempool_size = TimeWeightedStatistic()
+        self.block_gas_utilisation = SampleStatistic()
+        self.base_fee = TimeWeightedStatistic()
+        self.expiry_rate = TimeWeightedStatistic()
     
     def insert_transaction(self, transaction: Transaction):
         keys = [tx.tip for tx in self.mempool]
@@ -42,11 +49,13 @@ class Transaction:
     def __init__(
             self,
             model: GasMarket,
+            arrival_time: float,
             demand: float,
             max_fee: float,
             tip: float
         ) -> None:
         self.model = model
+        self.arrival_time = arrival_time
         self.demand = demand
         self.max_fee = max_fee
         self.tip = tip
@@ -63,7 +72,7 @@ class TransactionArrival(Event):
         demand = random.lognormvariate(m.g, m.sigma_g)
         max_fee = random.lognormvariate(m.f, m.sigma_f)
         tip = random.expovariate(m.pi)
-        transaction = Transaction(m, demand, max_fee, tip)
+        transaction = Transaction(m, self.time, demand, max_fee, tip)
         m.insert_transaction(transaction)
 
         expiry = Expire(self.time + m.T_exp, m, transaction)
@@ -84,7 +93,7 @@ class Expire(Event):
             return
         self.model.mempool.remove(self.transaction)
 
-class BlockArrival(Event):
+class BlockProduction(Event):
     def __init__(self, time: float, model: GasMarket):
         super().__init__(time)
         self.model = model
@@ -94,7 +103,12 @@ class BlockArrival(Event):
         m = self.model
 
         for transaction in m.mempool:
-            pass
+            if transaction.demand + amount_gas_used > m.gas_limit: continue
+            if transaction.expiry_event: transaction.expiry_event.cancel()
+            amount_gas_used += transaction.demand
+
+            m.confirmation_time.record(self.time - transaction.arrival_time)
+
 
         #update next base fee
         m.b = min(m.b_min, m.b*(1 + 1 / 8 * (amount_gas_used - m.gas_target) / m.gas_target))
