@@ -45,6 +45,11 @@ class GasMarket:
         idx = bisect.bisect_left(keys, transaction.tip)
         self.mempool.insert(idx, transaction)
 
+    def run(self):
+        self.sim.schedule(TransactionArrival(0.0, self))
+        self.sim.schedule(BlockProduction(0.0, self))
+        self.sim.run()
+
 class Transaction:
     def __init__(
             self,
@@ -102,13 +107,19 @@ class BlockProduction(Event):
         amount_gas_used: float = 0
         m = self.model
 
-        for transaction in m.mempool:
+        for i, transaction in enumerate(m.mempool):
             if transaction.demand + amount_gas_used > m.gas_limit: continue
             if transaction.expiry_event: transaction.expiry_event.cancel()
             amount_gas_used += transaction.demand
-
+            m.mempool.pop(i)
             m.confirmation_time.record(self.time - transaction.arrival_time)
 
 
         #update next base fee
         m.b = min(m.b_min, m.b*(1 + 1 / 8 * (amount_gas_used - m.gas_target) / m.gas_target))
+
+        next_block_time = random.expovariate(m.block_arrival_rate)
+        sim.schedule(BlockProduction(self.time + next_block_time, m))
+
+if __name__ == "__main__":
+    pass
