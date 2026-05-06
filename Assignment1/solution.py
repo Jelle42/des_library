@@ -112,7 +112,7 @@ class Arrival(Event):
 
     def execute(self, sim: Simulation) -> None:
         m = self.model
-        m.queue_length.update(self.time, max(len(m.queue) - m.num_chargers, 0))
+        m.queue_length.update(self.time, len(m.queue))
 
         busy = len(m.currently_charging)
         m.charger_utilisation.update(self.time, busy / m.num_chargers)
