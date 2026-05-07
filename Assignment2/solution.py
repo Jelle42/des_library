@@ -16,6 +16,9 @@ class GasMarket:
         self.gas_target = gas_target
         self.gas_limit = gas_limit
 
+        self.num_blocks: int = 0
+        self.num_transactions: int = 0
+
         self.sim = Simulation()
 
         self.mempool: list[Transaction] = []
@@ -23,15 +26,15 @@ class GasMarket:
         self.b_min: float = 1
         self.b: float = 10
 
-        self.transaction_arrival_rate: float = 0.7
-        self.block_arrival_rate: float = 1/12
+        self.transaction_arrival_rate: float = 10/7
+        self.block_arrival_rate: float = 12
         self.g: float = 10.69
         self.sigma_g: float = 0.5
         self.f: float = 4.56
         self.sigma_f: float = 0.3
         self.pi: float = 2
 
-        self.T_exp = 300
+        self.T_exp: float = 300
 
         #statistics to keep track of
         self.confirmation_time = SampleStatistic()
@@ -45,20 +48,22 @@ class GasMarket:
         idx = bisect.bisect_left(keys, transaction.tip)
         self.mempool.insert(idx, transaction)
 
-    def run(self, stopping_time):
+    def run(self, stopping_index):
         self.sim.schedule(TransactionArrival(0.0, self))
         self.sim.schedule(BlockProduction(0.0, self))
-        self.sim.run(lambda sim : sim.current_time > stopping_time)
+        self.sim.run(lambda sim : self.num_blocks > stopping_index)
 
     def report(self):
         t = self.sim.current_time
         print("Ethereum Gas Market Model")
-        print(f"Horizon time: {t}")
-        print(f"Avg. confirmation time: {self.confirmation_time.mean()}")
-        print(f"Avg. mempool size: {self.mempool_size.mean(t)}")
-        print(f"Avg. block-gas utilisation {self.block_gas_utilisation.mean()}")
-        print(f"Avg. base fee {self.base_fee.mean(t)}")
-        print(f"Avg. expiry rate {self.num_expiries.value / t}")
+        print(f"Horizon time: {t:.4f}")
+        print(f"Avg. confirmation time: {self.confirmation_time.mean():.4f}")
+        print(f"Avg. mempool size: {self.mempool_size.mean(t):.4f}")
+        print(f"Avg. block-gas utilisation {self.block_gas_utilisation.mean():.4f}")
+        print(f"Avg. base fee {self.base_fee.mean(t):.4f}")
+        print(f"Avg. expiry rate {self.num_expiries.rate(t):.4f}")
+        print(f"Number of blocks: {self.num_blocks}")
+        print(f"Number of transactions: {self.num_transactions}")
 
 class Transaction:
     def __init__(
@@ -88,7 +93,7 @@ class TransactionArrival(Event):
 
         demand = random.lognormvariate(m.g, m.sigma_g)
         max_fee = random.lognormvariate(m.f, m.sigma_f)
-        tip = random.expovariate(1 / m.pi)
+        tip = random.expovariate(m.pi)
         transaction = Transaction(m, self.time, demand, max_fee, tip)
         m.insert_transaction(transaction)
 
@@ -99,6 +104,7 @@ class TransactionArrival(Event):
         next_arrival = random.expovariate(m.transaction_arrival_rate)
         sim.schedule(TransactionArrival(self.time + next_arrival, m))
 
+        m.num_transactions += 1
         m.mempool_size.update(self.time, len(m.mempool))
 
 class Expire(Event):
@@ -140,14 +146,15 @@ class BlockProduction(Event):
 
 
         #update next base fee
-        m.b = min(m.b_min, m.b*(1 + 1 / 8 * (amount_gas_used - m.gas_target) / m.gas_target))
+        m.b = max(m.b_min, m.b*(1 + 1 / 8 * (amount_gas_used - m.gas_target) / m.gas_target))
 
         m.base_fee.update(self.time, m.b)
 
         next_block_time = random.expovariate(m.block_arrival_rate)
+        m.num_blocks += 1
         sim.schedule(BlockProduction(self.time + next_block_time, m))
 
 if __name__ == "__main__":
     model = GasMarket(15 * 1e6, 30 * 1e6)
-    model.run(10)
+    model.run(1_000_000)
     model.report()
