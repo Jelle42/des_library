@@ -11,10 +11,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from des_library import Simulation, Event, TimeWeightedStatistic, SampleStatistic, Counter
 
 class GasMarket:
-    def __init__(self, gas_target: float, gas_limit: float, transaction_arrival_rate: float, seed: int = 42):
+    def __init__(self, transaction_arrival_rate: float, seed: int = 42):
         random.seed(seed)
-        self.gas_target = gas_target
-        self.gas_limit = gas_limit
+        self.gas_target = 15 * 1e6
+        self.gas_limit = 30 * 1e6
 
         self.num_blocks: int = 0
         self.num_transactions: int = 0
@@ -27,7 +27,7 @@ class GasMarket:
         self.b: float = 10
 
         self.transaction_arrival_rate = transaction_arrival_rate
-        self.block_arrival_rate: float = 12
+        self.block_arrival_rate: float = 1/12
         self.g: float = 10.69
         self.sigma_g: float = 0.5
         self.f: float = 4.56
@@ -171,6 +171,6 @@ class UpdateBaseFee(Event):
         m.base_fee.update(self.time, m.b)
 
 if __name__ == "__main__":
-    model = GasMarket(15 * 1e6, 30 * 1e6, 0.7)
+    model = GasMarket(0.7)
     model.run(10_000, True)
     model.report()
