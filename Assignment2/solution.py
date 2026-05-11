@@ -11,8 +11,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from des_library import Simulation, Event, TimeWeightedStatistic, SampleStatistic, Counter
 
 class GasMarket:
-    def __init__(self, transaction_arrival_rate: float, seed: int = 42):
+    def __init__(self, transaction_arrival_rate: float, do_expire: bool = True, do_update_base_fee: bool = True, seed: int = 42):
         random.seed(seed)
+
+        self.do_expire = do_expire
+        self.do_update_base_fee = do_update_base_fee
+
         self.gas_target = 15 * 1e6
         self.gas_limit = 30 * 1e6
 
@@ -107,7 +111,7 @@ class TransactionArrival(Event):
 
         expiry = Expire(self.time + m.T_exp, m, transaction)
         transaction.expiry_event = expiry
-        sim.schedule(expiry)
+        if m.do_expire: sim.schedule(expiry)
 
         next_arrival = random.expovariate(m.transaction_arrival_rate)
         sim.schedule(TransactionArrival(self.time + next_arrival, m))
@@ -151,7 +155,7 @@ class BlockProduction(Event):
 
         m.block_gas_utilisation.record(amount_gas_used / m.gas_limit)
 
-        sim.schedule(UpdateBaseFee(self.time, m, amount_gas_used))
+        if m.do_update_base_fee: sim.schedule(UpdateBaseFee(self.time, m, amount_gas_used))
 
         next_block_time = random.expovariate(m.block_arrival_rate)
         m.num_blocks += 1
