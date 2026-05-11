@@ -49,6 +49,8 @@ class GasMarket:
 
         self.T_exp: float = 300
 
+        self.warmup_period: float = 0
+
         #statistics to keep track of
         self.confirmation_time = SampleStatistic()
         self.mempool_size = TimeWeightedStatistic()
@@ -124,15 +126,15 @@ class TransactionArrival(Event):
 
     def execute(self, sim: Simulation) -> None:
         m = self.model
-        m.mempool_size.update(self.time, len(m.mempool))
+        if self.time > m.warmup_period: m.mempool_size.update(self.time, len(m.mempool))
 
         demand = random.lognormvariate(m.g, m.sigma_g)
         max_fee = random.lognormvariate(m.f, m.sigma_f)
         tip = random.expovariate(m.pi)
-
-        m.gas_demands.record(demand)
-        m.max_fees.record(max_fee)
-        m.tips.record(tip)
+        if self.time > m.warmup_period:
+            m.gas_demands.record(demand)
+            m.max_fees.record(max_fee)
+            m.tips.record(tip)
 
         transaction = Transaction(m, self.time, demand, max_fee, tip)
         m.insert_transaction(transaction)
@@ -142,11 +144,11 @@ class TransactionArrival(Event):
         if m.do_expire: sim.schedule(expiry)
 
         next_arrival = random.expovariate(m.transaction_arrival_rate)
-        m.transaction_arrivals.record(next_arrival)
+        if self.time > m.warmup_period: m.transaction_arrivals.record(next_arrival)
         sim.schedule(TransactionArrival(self.time + next_arrival, m))
 
         m.num_transactions += 1
-        m.mempool_size.update(self.time, len(m.mempool))
+        if self.time > m.warmup_period: m.mempool_size.update(self.time, len(m.mempool))
 
 class Expire(Event):
     def __init__(self, time: float, model: GasMarket, transaction: Transaction) -> None:
@@ -159,9 +161,9 @@ class Expire(Event):
             return
 
         m = self.model
-        m.mempool_size.update(self.time, len(m.mempool))
+        if self.time > m.warmup_period: m.mempool_size.update(self.time, len(m.mempool))
         self.model.mempool.remove(self.transaction)
-        m.mempool_size.update(self.time, len(m.mempool))
+        if self.time > m.warmup_period: m.mempool_size.update(self.time, len(m.mempool))
 
         m.num_expiries.increment()
 
@@ -175,7 +177,7 @@ class BlockProduction(Event):
         m = self.model
 
         if m.block_capacity is not None:
-            queue = m.mempool[:-m.block_capacity]
+            queue = m.mempool[-m.block_capacity:]
         else:
             queue = m.mempool
 
@@ -185,9 +187,9 @@ class BlockProduction(Event):
             if transaction.expiry_event: transaction.expiry_event.cancel()
             amount_gas_used += transaction.demand
             m.mempool.remove(transaction)
-            m.confirmation_time.record(self.time - transaction.arrival_time)
+            if self.time > m.warmup_period: m.confirmation_time.record(self.time - transaction.arrival_time)
 
-        m.block_gas_utilisation.record(amount_gas_used / m.gas_limit)
+        if self.time > m.warmup_period: m.block_gas_utilisation.record(amount_gas_used / m.gas_limit)
 
         if m.do_update_base_fee: sim.schedule(UpdateBaseFee(self.time, m, amount_gas_used))
 
@@ -196,7 +198,7 @@ class BlockProduction(Event):
         else:
             next_block_time = 12
 
-        m.block_arrivals.record(next_block_time)
+        if self.time > m.warmup_period: m.block_arrivals.record(next_block_time)
 
         m.num_blocks += 1
         sim.schedule(BlockProduction(self.time + next_block_time, m))
@@ -209,10 +211,10 @@ class UpdateBaseFee(Event):
 
     def execute(self, sim: Simulation) -> None:
         m = self.model
-        m.base_fee.update(self.time, m.b)
+        if self.time > m.warmup_period: m.base_fee.update(self.time, m.b)
         #update next base fee
         m.b = max(m.b_min, m.b*(1 + 1 / 8 * (self.amount_gas_used - m.gas_target) / m.gas_target))
-        m.base_fee.update(self.time, m.b)
+        if self.time > m.warmup_period: m.base_fee.update(self.time, m.b)
 
 if __name__ == "__main__":
     model = GasMarket(12)
