@@ -150,19 +150,27 @@ class BlockProduction(Event):
             m.confirmation_time.record(self.time - transaction.arrival_time)
 
         m.block_gas_utilisation.record(amount_gas_used / m.gas_limit)
-        m.base_fee.update(self.time, m.b)
 
-
-        #update next base fee
-        m.b = max(m.b_min, m.b*(1 + 1 / 8 * (amount_gas_used - m.gas_target) / m.gas_target))
-
-        m.base_fee.update(self.time, m.b)
+        sim.schedule(UpdateBaseFee(self.time, m, amount_gas_used))
 
         next_block_time = random.expovariate(m.block_arrival_rate)
         m.num_blocks += 1
         sim.schedule(BlockProduction(self.time + next_block_time, m))
 
+class UpdateBaseFee(Event):
+    def __init__(self, time: float, model: GasMarket, amount_gas_used):
+        super().__init__(time)
+        self.model = model
+        self.amount_gas_used = amount_gas_used
+
+    def execute(self, sim: Simulation) -> None:
+        m = self.model
+        m.base_fee.update(self.time, m.b)
+        #update next base fee
+        m.b = max(m.b_min, m.b*(1 + 1 / 8 * (self.amount_gas_used - m.gas_target) / m.gas_target))
+        m.base_fee.update(self.time, m.b)
+
 if __name__ == "__main__":
     model = GasMarket(15 * 1e6, 30 * 1e6, 0.7)
-    model.run(100_000, True)
+    model.run(10_000, True)
     model.report()
