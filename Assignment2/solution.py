@@ -11,11 +11,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from des_library import Simulation, Event, TimeWeightedStatistic, SampleStatistic, Counter
 
 class GasMarket:
-    def __init__(self, transaction_arrival_rate: float, do_expire: bool = True, do_update_base_fee: bool = True, seed: int = 42):
+    def __init__(
+            self,
+            transaction_arrival_rate: float,
+            block_arrival_rate: float | None = 1/12,
+            do_expire: bool = True,
+            do_update_base_fee: bool = True,
+            block_capacity: int | None = None,
+            seed: int = 42
+        ):
         random.seed(seed)
 
         self.do_expire = do_expire
         self.do_update_base_fee = do_update_base_fee
+        self.block_capacity = block_capacity
 
         self.gas_target = 15 * 1e6
         self.gas_limit = 30 * 1e6
@@ -31,7 +40,7 @@ class GasMarket:
         self.b: float = 10
 
         self.transaction_arrival_rate = transaction_arrival_rate
-        self.block_arrival_rate: float = 1/12
+        self.block_arrival_rate = block_arrival_rate
         self.g: float = 10.69
         self.sigma_g: float = 0.5
         self.f: float = 4.56
@@ -46,10 +55,17 @@ class GasMarket:
         self.block_gas_utilisation = SampleStatistic()
         self.base_fee = TimeWeightedStatistic()
         self.num_expiries = Counter()
+
+        #statistics for all sampled 
+        self.gas_demands = SampleStatistic()
+        self.max_fees = SampleStatistic()
+        self.tips = SampleStatistic()
+        self.transaction_arrivals = SampleStatistic()
+        self.block_arrivals = SampleStatistic()
     
     def insert_transaction(self, transaction: Transaction):
         keys = [tx.tip for tx in self.mempool]
-        idx = bisect.bisect_left(keys, transaction.tip)
+        idx = bisect.bisect_right(keys, transaction.tip)
         self.mempool.insert(idx, transaction)
 
     def run(self, stop: int | float, is_time: bool = True):
@@ -76,7 +92,14 @@ class GasMarket:
         print(f"Avg. expiry rate {self.num_expiries.rate(t):.4f}")
         print(f"Number of blocks: {self.num_blocks}")
         print(f"Number of transactions: {self.num_transactions}")
-
+        print(f"Avg. gas demand: {self.gas_demands.mean():.4f} vs True mean: {50_000}")
+        print(f"Avg. max fee: {self.max_fees.mean():.4f} vs True mean: {100}")
+        print(f"Avg. tip: {self.tips.mean():.4f} vs True mean: {1/self.pi}")
+        print(f"Avg. transaction arrival rate {self.transaction_arrivals.mean():.4f} vs True mean: {1/self.transaction_arrival_rate}")
+        if self.block_arrival_rate is not None:
+            print(f"Avg. Block arrival rate {self.block_arrivals.mean():.4f} vs True mean: {1/self.block_arrival_rate}")
+        else:
+            print(f"Avg. Block arrival rate {self.block_arrivals.mean():.4f} vs True mean: {12}")
 class Transaction:
     def __init__(
             self,
@@ -106,6 +129,11 @@ class TransactionArrival(Event):
         demand = random.lognormvariate(m.g, m.sigma_g)
         max_fee = random.lognormvariate(m.f, m.sigma_f)
         tip = random.expovariate(m.pi)
+
+        m.gas_demands.record(demand)
+        m.max_fees.record(max_fee)
+        m.tips.record(tip)
+
         transaction = Transaction(m, self.time, demand, max_fee, tip)
         m.insert_transaction(transaction)
 
@@ -114,6 +142,7 @@ class TransactionArrival(Event):
         if m.do_expire: sim.schedule(expiry)
 
         next_arrival = random.expovariate(m.transaction_arrival_rate)
+        m.transaction_arrivals.record(next_arrival)
         sim.schedule(TransactionArrival(self.time + next_arrival, m))
 
         m.num_transactions += 1
@@ -145,19 +174,30 @@ class BlockProduction(Event):
         amount_gas_used: float = 0
         m = self.model
 
+        if m.block_capacity is not None:
+            queue = m.mempool[:-m.block_capacity]
+        else:
+            queue = m.mempool
 
-        for i, transaction in enumerate(m.mempool):
+        for transaction in reversed(queue):
             if transaction.demand + amount_gas_used > m.gas_limit: continue
+            if transaction.max_fee < m.b: continue
             if transaction.expiry_event: transaction.expiry_event.cancel()
             amount_gas_used += transaction.demand
-            m.mempool.pop(i)
+            m.mempool.remove(transaction)
             m.confirmation_time.record(self.time - transaction.arrival_time)
 
         m.block_gas_utilisation.record(amount_gas_used / m.gas_limit)
 
         if m.do_update_base_fee: sim.schedule(UpdateBaseFee(self.time, m, amount_gas_used))
 
-        next_block_time = random.expovariate(m.block_arrival_rate)
+        if m.block_arrival_rate is not None:
+            next_block_time = random.expovariate(m.block_arrival_rate)
+        else:
+            next_block_time = 12
+
+        m.block_arrivals.record(next_block_time)
+
         m.num_blocks += 1
         sim.schedule(BlockProduction(self.time + next_block_time, m))
 
@@ -175,6 +215,6 @@ class UpdateBaseFee(Event):
         m.base_fee.update(self.time, m.b)
 
 if __name__ == "__main__":
-    model = GasMarket(0.7)
+    model = GasMarket(12)
     model.run(10_000, True)
     model.report()
