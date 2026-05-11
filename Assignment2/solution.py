@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from des_library import Simulation, Event, TimeWeightedStatistic, SampleStatistic, Counter
 
 class GasMarket:
-    def __init__(self, gas_target: float, gas_limit: float, seed: int = 42):
+    def __init__(self, gas_target: float, gas_limit: float, transaction_arrival_rate: float, seed: int = 42):
         random.seed(seed)
         self.gas_target = gas_target
         self.gas_limit = gas_limit
@@ -26,7 +26,7 @@ class GasMarket:
         self.b_min: float = 1
         self.b: float = 10
 
-        self.transaction_arrival_rate: float = 10/7
+        self.transaction_arrival_rate = transaction_arrival_rate
         self.block_arrival_rate: float = 12
         self.g: float = 10.69
         self.sigma_g: float = 0.5
@@ -48,10 +48,18 @@ class GasMarket:
         idx = bisect.bisect_left(keys, transaction.tip)
         self.mempool.insert(idx, transaction)
 
-    def run(self, stopping_index):
+    def run(self, stop: int | float, is_time: bool = True):
         self.sim.schedule(TransactionArrival(0.0, self))
         self.sim.schedule(BlockProduction(0.0, self))
-        self.sim.run(lambda sim : self.num_blocks > stopping_index)
+        def stopping_condition1(sim: Simulation) -> bool:
+            return sim.current_time > stop
+        def stopping_condition2(sim: Simulation, model: GasMarket = self) -> bool:
+            return model.num_blocks > stop
+        if is_time:
+            stop_con = stopping_condition1
+        else:
+            stop_con = stopping_condition2
+        self.sim.run(stop_con)
 
     def report(self):
         t = self.sim.current_time
@@ -155,6 +163,6 @@ class BlockProduction(Event):
         sim.schedule(BlockProduction(self.time + next_block_time, m))
 
 if __name__ == "__main__":
-    model = GasMarket(15 * 1e6, 30 * 1e6)
-    model.run(1_000_000)
+    model = GasMarket(15 * 1e6, 30 * 1e6, 0.7)
+    model.run(100_000, True)
     model.report()
