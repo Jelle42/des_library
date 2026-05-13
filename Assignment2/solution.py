@@ -15,7 +15,8 @@ class GasMarket:
     def __init__(
             self,
             transaction_arrival_rate: float,
-            stopping_time: int | float,
+            stopping_time: float,
+            warmup_period: float = 0,
             block_arrival_rate: float | None = 1/12,
             do_expire: bool = True,
             do_update_base_fee: bool = True,
@@ -34,8 +35,6 @@ class GasMarket:
 
         self.num_blocks: int = 0
         self.num_transactions: int = 0
-        self.batch_num_blocks: int = 0
-        self.batch_num_transactions: int= 0
 
         self.sim = Simulation()
 
@@ -54,7 +53,7 @@ class GasMarket:
 
         self.T_exp: float = 300
 
-        self.warmup_period: float = 0
+        self.warmup_period = warmup_period
 
         self.num_batches: int = 50
         self.current_batch: int = 0 # runs from 0 to num_batches-1
@@ -95,7 +94,7 @@ class GasMarket:
         self.batch_mempool_size.record(self.mempool_size.mean(time))
         self.batch_block_gas_utilisation.record(self.block_gas_utilisation.mean())
         self.batch_base_fee.record(self.base_fee.mean(time))
-        self.batch_expiry_rate.record(self.num_expiries.value / self.batch_num_transactions)
+        self.batch_expiry_rate.record(self.num_expiries.rate(self.batch_times[self.current_batch] - time))
 
         # statistics for all samples instances
         self.batch_gas_demands.record(self.gas_demands.mean())
@@ -116,10 +115,7 @@ class GasMarket:
         self.tips.reset()
         self.transaction_arrivals.reset()
         self.block_arrivals.reset()
-
-        self.batch_num_transactions = 0
-        self.batch_num_blocks = 0
-
+        
     def run(self):
         self.sim.schedule(TransactionArrival(0.0, self))
         self.sim.schedule(BlockProduction(0.0, self))
@@ -129,21 +125,21 @@ class GasMarket:
         t = self.sim.current_time
         print("Ethereum Gas Market Model")
         print(f"Horizon time: {t:.4f}")
-        print(f"Avg. confirmation time: {self.confirmation_time.mean():.4f}")
-        print(f"Avg. mempool size: {self.mempool_size.mean(t):.4f}")
-        print(f"Avg. block-gas utilisation {self.block_gas_utilisation.mean():.4f}")
-        print(f"Avg. base fee {self.base_fee.mean(t):.4f}")
-        print(f"Avg. expiry rate {self.num_expiries.rate(t):.4f}")
+        print(f"Avg. confirmation time: {self.batch_confirmation_time.mean():.4f}")
+        print(f"Avg. mempool size: {self.batch_mempool_size.mean():.4f}")
+        print(f"Avg. block-gas utilisation {self.batch_block_gas_utilisation.mean():.4f}")
+        print(f"Avg. base fee {self.batch_base_fee.mean():.4f}")
+        print(f"Avg. expiry rate {self.batch_expiry_rate.mean():.4f}")
         print(f"Number of blocks: {self.num_blocks}")
         print(f"Number of transactions: {self.num_transactions}")
-        print(f"Avg. gas demand: {self.gas_demands.mean():.4f} vs True mean: {50_000}")
-        print(f"Avg. max fee: {self.max_fees.mean():.4f} vs True mean: {100}")
-        print(f"Avg. tip: {self.tips.mean():.4f} vs True mean: {1/self.pi}")
-        print(f"Avg. transaction arrival rate {self.transaction_arrivals.mean():.4f} vs True mean: {1/self.transaction_arrival_rate}")
+        print(f"Avg. gas demand: {self.batch_gas_demands.mean():.4f} vs True mean: {50_000}")
+        print(f"Avg. max fee: {self.batch_max_fees.mean():.4f} vs True mean: {100}")
+        print(f"Avg. tip: {self.batch_tips.mean():.4f} vs True mean: {1/self.pi}")
+        print(f"Avg. transaction arrival rate {self.batch_transaction_arrivals.mean():.4f} vs True mean: {1/self.transaction_arrival_rate}")
         if self.block_arrival_rate is not None:
-            print(f"Avg. Block arrival rate {self.block_arrivals.mean():.4f} vs True mean: {1/self.block_arrival_rate}")
+            print(f"Avg. Block arrival rate {self.batch_block_arrivals.mean():.4f} vs True mean: {1/self.block_arrival_rate}")
         else:
-            print(f"Avg. Block arrival rate {self.block_arrivals.mean():.4f} vs True mean: {12}")
+            print(f"Avg. Block arrival rate {self.batch_block_arrivals.mean():.4f} vs True mean: {12}")
 class Transaction:
     def __init__(
             self,
@@ -195,7 +191,6 @@ class TransactionArrival(Event):
         sim.schedule(TransactionArrival(self.time + next_arrival, m))
 
         m.num_transactions += 1
-        m.batch_num_transactions += 1
         if self.time > m.warmup_period: m.mempool_size.update(self.time, len(m.mempool))
 
 class Expire(Event):
@@ -257,7 +252,6 @@ class BlockProduction(Event):
         if self.time > m.warmup_period: m.block_arrivals.record(next_block_time)
 
         m.num_blocks += 1
-        m.batch_num_blocks += 1
         sim.schedule(BlockProduction(self.time + next_block_time, m))
 
 class UpdateBaseFee(Event):
