@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import numpy as np
 import random
 import os
 import sys
@@ -14,6 +15,7 @@ class GasMarket:
     def __init__(
             self,
             transaction_arrival_rate: float,
+            stopping_time: int | float,
             block_arrival_rate: float | None = 1/12,
             do_expire: bool = True,
             do_update_base_fee: bool = True,
@@ -25,12 +27,15 @@ class GasMarket:
         self.do_expire = do_expire
         self.do_update_base_fee = do_update_base_fee
         self.block_capacity = block_capacity
+        self.stopping_time = stopping_time
 
         self.gas_target = 15 * 1e6
         self.gas_limit = 30 * 1e6
 
         self.num_blocks: int = 0
         self.num_transactions: int = 0
+        self.batch_num_blocks: int = 0
+        self.batch_num_transactions: int= 0
 
         self.sim = Simulation()
 
@@ -51,37 +56,74 @@ class GasMarket:
 
         self.warmup_period: float = 0
 
+        self.num_batches: int = 50
+        self.current_batch: int = 0 # runs from 0 to num_batches-1
+        self.batch_times = np.linspace(self.warmup_period, self.stopping_time, self.num_batches)
+
         #statistics to keep track of
         self.confirmation_time = SampleStatistic()
+        self.batch_confirmation_time = SampleStatistic()
         self.mempool_size = TimeWeightedStatistic()
+        self.batch_mempool_size = SampleStatistic()
         self.block_gas_utilisation = SampleStatistic()
+        self.batch_block_gas_utilisation = SampleStatistic()
         self.base_fee = TimeWeightedStatistic()
+        self.batch_base_fee = SampleStatistic()
         self.num_expiries = Counter()
+        self.batch_expiry_rate = SampleStatistic()
 
-        #statistics for all sampled 
+        #statistics for all sampled isntances
         self.gas_demands = SampleStatistic()
+        self.batch_gas_demands = SampleStatistic()
         self.max_fees = SampleStatistic()
+        self.batch_max_fees = SampleStatistic()
         self.tips = SampleStatistic()
+        self.batch_tips = SampleStatistic()
         self.transaction_arrivals = SampleStatistic()
+        self.batch_transaction_arrivals = SampleStatistic()
         self.block_arrivals = SampleStatistic()
+        self.batch_block_arrivals = SampleStatistic()
     
     def insert_transaction(self, transaction: Transaction):
         keys = [tx.tip for tx in self.mempool]
         idx = bisect.bisect_right(keys, transaction.tip)
         self.mempool.insert(idx, transaction)
 
-    def run(self, stop: int | float, is_time: bool = True):
+    def save_batch_statistics(self, time: float, reset: bool = True):
+        # statistics to keep track of
+        self.batch_confirmation_time.record(self.confirmation_time.mean())
+        self.batch_mempool_size.record(self.mempool_size.mean(time))
+        self.batch_block_gas_utilisation.record(self.block_gas_utilisation.mean())
+        self.batch_base_fee.record(self.base_fee.mean(time))
+        self.batch_expiry_rate.record(self.num_expiries.value / self.batch_num_transactions)
+
+        # statistics for all samples instances
+        self.batch_gas_demands.record(self.gas_demands.mean())
+        self.batch_max_fees.record(self.max_fees.mean())
+        self.batch_tips.record(self.tips.mean())
+        self.batch_transaction_arrivals.record(self.transaction_arrivals.mean())
+        self.batch_block_arrivals.record(self.block_arrivals.mean())
+
+        if not reset: return
+        self.confirmation_time.reset()
+        self.mempool_size.reset()
+        self.block_gas_utilisation.reset()
+        self.base_fee.reset()
+        self.num_expiries.reset()
+
+        self.gas_demands.reset()
+        self.max_fees.reset()
+        self.tips.reset()
+        self.transaction_arrivals.reset()
+        self.block_arrivals.reset()
+
+        self.batch_num_transactions = 0
+        self.batch_num_blocks = 0
+
+    def run(self):
         self.sim.schedule(TransactionArrival(0.0, self))
         self.sim.schedule(BlockProduction(0.0, self))
-        def stopping_condition1(sim: Simulation) -> bool:
-            return sim.current_time > stop
-        def stopping_condition2(sim: Simulation, model: GasMarket = self) -> bool:
-            return model.num_blocks > stop
-        if is_time:
-            stop_con = stopping_condition1
-        else:
-            stop_con = stopping_condition2
-        self.sim.run(stop_con)
+        self.sim.run(lambda sim: sim.current_time > self.stopping_time)
 
     def report(self):
         t = self.sim.current_time
@@ -126,6 +168,11 @@ class TransactionArrival(Event):
 
     def execute(self, sim: Simulation) -> None:
         m = self.model
+
+        if self.time > m.batch_times[m.current_batch]:
+            m.save_batch_statistics(self.time)
+            m.current_batch += 1
+
         if self.time > m.warmup_period: m.mempool_size.update(self.time, len(m.mempool))
 
         demand = random.lognormvariate(m.g, m.sigma_g)
@@ -148,6 +195,7 @@ class TransactionArrival(Event):
         sim.schedule(TransactionArrival(self.time + next_arrival, m))
 
         m.num_transactions += 1
+        m.batch_num_transactions += 1
         if self.time > m.warmup_period: m.mempool_size.update(self.time, len(m.mempool))
 
 class Expire(Event):
@@ -161,6 +209,10 @@ class Expire(Event):
             return
 
         m = self.model
+        if self.time > m.batch_times[m.current_batch]:
+            m.save_batch_statistics(self.time)
+            m.current_batch += 1
+
         if self.time > m.warmup_period: m.mempool_size.update(self.time, len(m.mempool))
         self.model.mempool.remove(self.transaction)
         if self.time > m.warmup_period: m.mempool_size.update(self.time, len(m.mempool))
@@ -175,6 +227,10 @@ class BlockProduction(Event):
     def execute(self, sim: Simulation) -> None:
         amount_gas_used: float = 0
         m = self.model
+
+        if self.time > m.batch_times[m.current_batch]:
+            m.save_batch_statistics(self.time)
+            m.current_batch += 1
 
         if m.block_capacity is not None:
             queue = m.mempool[-m.block_capacity:]
@@ -201,6 +257,7 @@ class BlockProduction(Event):
         if self.time > m.warmup_period: m.block_arrivals.record(next_block_time)
 
         m.num_blocks += 1
+        m.batch_num_blocks += 1
         sim.schedule(BlockProduction(self.time + next_block_time, m))
 
 class UpdateBaseFee(Event):
@@ -211,12 +268,17 @@ class UpdateBaseFee(Event):
 
     def execute(self, sim: Simulation) -> None:
         m = self.model
+
+        if self.time > m.batch_times[m.current_batch]:
+            m.save_batch_statistics(self.time)
+            m.current_batch += 1
+
         if self.time > m.warmup_period: m.base_fee.update(self.time, m.b)
         #update next base fee
         m.b = max(m.b_min, m.b*(1 + 1 / 8 * (self.amount_gas_used - m.gas_target) / m.gas_target))
         if self.time > m.warmup_period: m.base_fee.update(self.time, m.b)
 
 if __name__ == "__main__":
-    model = GasMarket(12)
-    model.run(10_000, True)
+    model = GasMarket(12, 100_000)
+    model.run()
     model.report()
