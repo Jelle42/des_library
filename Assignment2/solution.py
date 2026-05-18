@@ -130,7 +130,7 @@ class GasMarket:
         print(f"Avg. mempool size: {self.batch_mempool_size.mean():.4f}")
         print(f"Avg. block-gas utilisation {self.batch_block_gas_utilisation.mean():.4f}")
         print(f"Avg. base fee {self.batch_base_fee.mean():.4f}")
-        print(f"Avg. base fee over full series {self.base_fee_full_series.mean(t)}")
+        print(f"Avg. base fee over full series {self.base_fee_full_series.mean(t):.4f}")
         print(f"Avg. expiry rate {self.batch_expiry_rate.mean():.4f}")
         print(f"Number of blocks: {self.num_blocks}")
         print(f"Number of transactions: {self.num_transactions}")
@@ -168,10 +168,6 @@ class TransactionArrival(Event):
     def execute(self, sim: Simulation) -> None:
         m = self.model
 
-        if self.time > m.batch_times[m.current_batch]:
-            m.save_batch_statistics(self.time - m.batch_times[m.current_batch])
-            m.current_batch += 1
-
         if self.time > m.warmup_period: m.mempool_size.update(self.time - m.batch_times[m.current_batch], len(m.mempool))
 
         demand = random.lognormvariate(m.g, m.sigma_g)
@@ -195,6 +191,10 @@ class TransactionArrival(Event):
 
         m.num_transactions += 1
         if self.time > m.warmup_period: m.mempool_size.update(self.time - m.batch_times[m.current_batch], len(m.mempool))
+        
+        if self.time > m.batch_times[m.current_batch]:
+            m.save_batch_statistics(self.time - m.batch_times[m.current_batch])
+            m.current_batch += 1
 
 class Expire(Event):
     def __init__(self, time: float, model: GasMarket, transaction: Transaction) -> None:
@@ -207,15 +207,16 @@ class Expire(Event):
             return
 
         m = self.model
-        if self.time > m.batch_times[m.current_batch]:
-            m.save_batch_statistics(self.time - m.batch_times[m.current_batch])
-            m.current_batch += 1
 
         if self.time > m.warmup_period: m.mempool_size.update(self.time - m.batch_times[m.current_batch], len(m.mempool))
         self.model.mempool.remove(self.transaction)
         if self.time > m.warmup_period: m.mempool_size.update(self.time - m.batch_times[m.current_batch], len(m.mempool))
 
         m.num_expiries.increment()
+
+        if self.time > m.batch_times[m.current_batch]:
+            m.save_batch_statistics(self.time - m.batch_times[m.current_batch])
+            m.current_batch += 1
 
 class BlockProduction(Event):
     def __init__(self, time: float, model: GasMarket):
@@ -225,10 +226,6 @@ class BlockProduction(Event):
     def execute(self, sim: Simulation) -> None:
         amount_gas_used: float = 0
         m = self.model
-
-        if self.time > m.batch_times[m.current_batch]:
-            m.save_batch_statistics(self.time - m.batch_times[m.current_batch])
-            m.current_batch += 1
 
         if m.block_capacity is not None:
             queue = m.mempool[-m.block_capacity:]
@@ -257,6 +254,10 @@ class BlockProduction(Event):
         m.num_blocks += 1
         sim.schedule(BlockProduction(self.time + next_block_time, m))
 
+        if self.time > m.batch_times[m.current_batch]:
+            m.save_batch_statistics(self.time - m.batch_times[m.current_batch])
+            m.current_batch += 1
+
 class UpdateBaseFee(Event):
     def __init__(self, time: float, model: GasMarket, amount_gas_used):
         super().__init__(time)
@@ -266,19 +267,19 @@ class UpdateBaseFee(Event):
     def execute(self, sim: Simulation) -> None:
         m = self.model
 
-        if self.time > m.batch_times[m.current_batch]:
-            m.save_batch_statistics(self.time - m.batch_times[m.current_batch])
-            m.current_batch += 1
-
         #update next base fee
         m.b = max(m.b_min, m.b*(1 + 1 / 8 * (self.amount_gas_used - m.gas_target) / m.gas_target))
         if self.time > m.warmup_period: m.base_fee.update(self.time - m.batch_times[m.current_batch], m.b)
         m.base_fee_full_series.update(self.time, m.b)
 
+        if self.time > m.batch_times[m.current_batch]:
+            m.save_batch_statistics(self.time - m.batch_times[m.current_batch])
+            m.current_batch += 1
+
 if __name__ == "__main__":
     import time
     start = time.time()
-    model = GasMarket(12, 100_000, 90_000)
+    model = GasMarket(12, 100_000, 20_000)
     model.run()
     model.report()
     print(f"Simulation ran for {(time.time() - start):.4f} seconds")
