@@ -67,6 +67,7 @@ class GasMarket:
         self.block_gas_utilisation = SampleStatistic()
         self.batch_block_gas_utilisation = SampleStatistic()
         self.base_fee = TimeWeightedStatistic()
+        self.base_fee_full_series = TimeWeightedStatistic()
         self.batch_base_fee = SampleStatistic()
         self.num_expiries = Counter()
         self.batch_expiry_rate = SampleStatistic()
@@ -129,6 +130,7 @@ class GasMarket:
         print(f"Avg. mempool size: {self.batch_mempool_size.mean():.4f}")
         print(f"Avg. block-gas utilisation {self.batch_block_gas_utilisation.mean():.4f}")
         print(f"Avg. base fee {self.batch_base_fee.mean():.4f}")
+        print(f"Avg. base fee over full series {self.base_fee_full_series.mean(t)}")
         print(f"Avg. expiry rate {self.batch_expiry_rate.mean():.4f}")
         print(f"Number of blocks: {self.num_blocks}")
         print(f"Number of transactions: {self.num_transactions}")
@@ -268,10 +270,10 @@ class UpdateBaseFee(Event):
             m.save_batch_statistics(self.time - m.batch_times[m.current_batch])
             m.current_batch += 1
 
-        if self.time > m.warmup_period: m.base_fee.update(self.time - m.batch_times[m.current_batch], m.b)
         #update next base fee
         m.b = max(m.b_min, m.b*(1 + 1 / 8 * (self.amount_gas_used - m.gas_target) / m.gas_target))
         if self.time > m.warmup_period: m.base_fee.update(self.time - m.batch_times[m.current_batch], m.b)
+        m.base_fee_full_series.update(self.time, m.b)
 
 if __name__ == "__main__":
     import time
