@@ -94,7 +94,7 @@ class GasMarket:
         self.batch_mempool_size.record(self.mempool_size.mean(time))
         self.batch_block_gas_utilisation.record(self.block_gas_utilisation.mean())
         self.batch_base_fee.record(self.base_fee.mean(time))
-        self.batch_expiry_rate.record(self.num_expiries.rate(self.batch_times[self.current_batch] - time))
+        self.batch_expiry_rate.record(self.num_expiries.rate(time))
 
         # statistics for all samples instances
         self.batch_gas_demands.record(self.gas_demands.mean())
