@@ -55,6 +55,7 @@ class GasMarket:
 
         self.current_cycle: int = 0
         self.last_cycle_update_time: float = 0.0
+        self.is_cycle_updated: bool = False
 
         #statistics to keep track of
         self.confirmation_time = SampleStatistic()
@@ -115,9 +116,10 @@ class GasMarket:
         self.transaction_arrivals.reset()
         self.block_arrivals.reset()
     
-    def update_cycle(self, now: float):
-        self.save_cycle_statistics(now - self.last_cycle_update_time)
+    def update_cycle(self, now: float, reset: bool = True):
+        self.save_cycle_statistics(now - self.last_cycle_update_time, reset)
         self.last_cycle_update_time = now
+        self.is_cycle_updated = True
         self.current_cycle += 1
         
     def run(self):
@@ -172,6 +174,7 @@ class TransactionArrival(Event):
 
     def execute(self, sim: Simulation) -> None:
         m = self.model
+        m.is_cycle_updated = False
 
         m.mempool_size.update(self.time - m.last_cycle_update_time, len(m.mempool))
         m.mempool_size_full_series.update(self.time, len(m.mempool))
@@ -218,7 +221,7 @@ class Expire(Event):
 
         m.num_expiries.increment()
 
-        if len(m.mempool) == 0 and self.time != m.last_cycle_update_time: m.update_cycle(self.time)
+        if len(m.mempool) == 0 and not m.is_cycle_updated: m.update_cycle(self.time)
 
 
 class BlockProduction(Event):
@@ -265,7 +268,7 @@ class BlockProduction(Event):
 
         #only want to update this now if we do not update the base fee, otherwise, we want to do this after updating base fee
         if not m.do_update_base_fee: return
-        if len(m.mempool) == 0 and self.time != m.last_cycle_update_time: m.update_cycle(self.time)
+        if len(m.mempool) == 0 and not m.is_cycle_updated: m.update_cycle(self.time)
 
 class UpdateBaseFee(Event):
     def __init__(self, time: float, model: GasMarket, amount_gas_used):
@@ -281,7 +284,7 @@ class UpdateBaseFee(Event):
         m.base_fee.update(self.time - m.last_cycle_update_time, m.b)
         m.base_fee_full_series.update(self.time, m.b)
 
-        if len(m.mempool) == 0 and self.time != m.last_cycle_update_time: m.update_cycle(self.time)
+        if len(m.mempool) == 0 and not m.is_cycle_updated: m.update_cycle(self.time)
 
 if __name__ == "__main__":
     import time
