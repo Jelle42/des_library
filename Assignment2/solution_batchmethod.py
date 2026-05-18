@@ -240,6 +240,9 @@ class BlockProduction(Event):
         else:
             queue = m.mempool
 
+        if self.time > m.warmup_period: m.mempool_size.update(self.time - m.batch_times[m.current_batch], len(m.mempool))
+        m.mempool_size_full_series.update(self.time, len(m.mempool))
+
         for transaction in reversed(queue):
             if transaction.demand + amount_gas_used > m.gas_limit: continue
             if transaction.max_fee < m.b: continue
@@ -248,7 +251,10 @@ class BlockProduction(Event):
             m.mempool.remove(transaction)
             if self.time > m.warmup_period: m.confirmation_time.record(self.time - transaction.arrival_time)
 
-        if self.time > m.warmup_period: m.block_gas_utilisation.record(amount_gas_used / m.gas_limit)
+        if self.time > m.warmup_period:
+            m.mempool_size.update(self.time - m.batch_times[m.current_batch], len(m.mempool))
+            m.mempool_size_full_series.update(self.time, len(m.mempool))
+            m.block_gas_utilisation.record(amount_gas_used / m.gas_limit)
 
         if m.do_update_base_fee: sim.schedule(UpdateBaseFee(self.time, m, amount_gas_used))
 

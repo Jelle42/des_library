@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import numpy as np
 import random
 import os
 import sys
@@ -14,6 +15,7 @@ class GasMarket:
     def __init__(
             self,
             transaction_arrival_rate: float,
+            stopping_time: float,
             block_arrival_rate: float | None = 1/12,
             do_expire: bool = True,
             do_update_base_fee: bool = True,
@@ -25,6 +27,7 @@ class GasMarket:
         self.do_expire = do_expire
         self.do_update_base_fee = do_update_base_fee
         self.block_capacity = block_capacity
+        self.stopping_time = stopping_time
 
         self.gas_target = 15 * 1e6
         self.gas_limit = 30 * 1e6
@@ -49,57 +52,101 @@ class GasMarket:
 
         self.T_exp: float = 300
 
+
+        self.current_cycle: int = 0
+        self.last_cycle_update_time: float = 0.0
+
         #statistics to keep track of
         self.confirmation_time = SampleStatistic()
+        self.cycle_confirmation_time = SampleStatistic()
         self.mempool_size = TimeWeightedStatistic()
+        self.mempool_size_full_series = TimeWeightedStatistic()
+        self.cycle_mempool_size = SampleStatistic()
         self.block_gas_utilisation = SampleStatistic()
+        self.cycle_block_gas_utilisation = SampleStatistic()
         self.base_fee = TimeWeightedStatistic()
+        self.base_fee_full_series = TimeWeightedStatistic()
+        self.cycle_base_fee = SampleStatistic()
         self.num_expiries = Counter()
+        self.cycle_expiry_rate = SampleStatistic()
 
-        #statistics for all sampled 
+        #statistics for all sampled isntances
         self.gas_demands = SampleStatistic()
+        self.cycle_gas_demands = SampleStatistic()
         self.max_fees = SampleStatistic()
+        self.cycle_max_fees = SampleStatistic()
         self.tips = SampleStatistic()
+        self.cycle_tips = SampleStatistic()
         self.transaction_arrivals = SampleStatistic()
+        self.cycle_transaction_arrivals = SampleStatistic()
         self.block_arrivals = SampleStatistic()
+        self.cycle_block_arrivals = SampleStatistic()
     
     def insert_transaction(self, transaction: Transaction):
         keys = [tx.tip for tx in self.mempool]
         idx = bisect.bisect_right(keys, transaction.tip)
         self.mempool.insert(idx, transaction)
 
-    def run(self, stop: int | float, is_time: bool = True):
+    def save_cycle_statistics(self, time: float, reset: bool = True):
+        # statistics to keep track of
+        self.cycle_confirmation_time.record(self.confirmation_time.mean())
+        self.cycle_mempool_size.record(self.mempool_size.mean(time))
+        self.cycle_block_gas_utilisation.record(self.block_gas_utilisation.mean())
+        self.cycle_base_fee.record(self.base_fee.mean(time))
+        self.cycle_expiry_rate.record(self.num_expiries.rate(time))
+
+        # statistics for all samples instances
+        self.cycle_gas_demands.record(self.gas_demands.mean())
+        self.cycle_max_fees.record(self.max_fees.mean())
+        self.cycle_tips.record(self.tips.mean())
+        self.cycle_transaction_arrivals.record(self.transaction_arrivals.mean())
+        self.cycle_block_arrivals.record(self.block_arrivals.mean())
+
+        if not reset: return
+        self.confirmation_time.reset()
+        self.mempool_size.reset()
+        self.block_gas_utilisation.reset()
+        self.base_fee.reset()
+        self.num_expiries.reset()
+
+        self.gas_demands.reset()
+        self.max_fees.reset()
+        self.tips.reset()
+        self.transaction_arrivals.reset()
+        self.block_arrivals.reset()
+    
+    def update_cycle(self, now: float):
+        self.save_cycle_statistics(now - self.last_cycle_update_time)
+        self.last_cycle_update_time = now
+        self.current_cycle += 1
+        
+    def run(self):
         self.sim.schedule(TransactionArrival(0.0, self))
         self.sim.schedule(BlockProduction(0.0, self))
-        def stopping_condition1(sim: Simulation) -> bool:
-            return sim.current_time > stop
-        def stopping_condition2(sim: Simulation, model: GasMarket = self) -> bool:
-            return model.num_blocks > stop
-        if is_time:
-            stop_con = stopping_condition1
-        else:
-            stop_con = stopping_condition2
-        self.sim.run(stop_con)
+        self.sim.run(lambda sim: sim.current_time > self.stopping_time)
 
     def report(self):
         t = self.sim.current_time
         print("Ethereum Gas Market Model")
         print(f"Horizon time: {t:.4f}")
-        print(f"Avg. confirmation time: {self.confirmation_time.mean():.4f}")
-        print(f"Avg. mempool size: {self.mempool_size.mean(t):.4f}")
-        print(f"Avg. block-gas utilisation {self.block_gas_utilisation.mean():.4f}")
-        print(f"Avg. base fee {self.base_fee.mean(t):.4f}")
-        print(f"Avg. expiry rate {self.num_expiries.rate(t):.4f}")
+        print(f"Avg. confirmation time: {self.cycle_confirmation_time.mean():.4f}")
+        print(f"Avg. mempool size: {self.cycle_mempool_size.mean():.4f}")
+        print(f"Avg. mempool size over full series: {self.mempool_size_full_series.mean(t):.4f}")
+        print(f"Avg. block-gas utilisation: {self.cycle_block_gas_utilisation.mean():.4f}")
+        print(f"Avg. base fee: {self.cycle_base_fee.mean():.4f}")
+        print(f"Avg. base fee over full series: {self.base_fee_full_series.mean(t):.4f}")
+        print(f"Avg. expiry rate: {self.cycle_expiry_rate.mean():.4f}")
         print(f"Number of blocks: {self.num_blocks}")
         print(f"Number of transactions: {self.num_transactions}")
-        print(f"Avg. gas demand: {self.gas_demands.mean():.4f} vs True mean: {50_000}")
-        print(f"Avg. max fee: {self.max_fees.mean():.4f} vs True mean: {100}")
-        print(f"Avg. tip: {self.tips.mean():.4f} vs True mean: {1/self.pi}")
-        print(f"Avg. transaction arrival rate {self.transaction_arrivals.mean():.4f} vs True mean: {1/self.transaction_arrival_rate}")
+        print(f"Avg. gas demand: {self.cycle_gas_demands.mean():.4f} vs True mean: {50_000}")
+        print(f"Avg. max fee: {self.cycle_max_fees.mean():.4f} vs True mean: {100}")
+        print(f"Avg. tip: {self.cycle_tips.mean():.4f} vs True mean: {1/self.pi:.4f}")
+        print(f"Avg. transaction arrival rate {self.cycle_transaction_arrivals.mean():.4f} vs True mean: {1/self.transaction_arrival_rate:.4f}")
         if self.block_arrival_rate is not None:
-            print(f"Avg. Block arrival rate {self.block_arrivals.mean():.4f} vs True mean: {1/self.block_arrival_rate}")
+            print(f"Avg. Block arrival rate {self.cycle_block_arrivals.mean():.4f} vs True mean: {1/self.block_arrival_rate:.4f}")
         else:
-            print(f"Avg. Block arrival rate {self.block_arrivals.mean():.4f} vs True mean: {12}")
+            print(f"Avg. Block arrival rate {self.cycle_block_arrivals.mean():.4f} vs True mean: {12}")
+        print(f"Current cycle: {self.current_cycle}")
 
 class Transaction:
     def __init__(
@@ -125,12 +172,13 @@ class TransactionArrival(Event):
 
     def execute(self, sim: Simulation) -> None:
         m = self.model
-        m.mempool_size.update(self.time, len(m.mempool))
+
+        m.mempool_size.update(self.time - m.last_cycle_update_time, len(m.mempool))
+        m.mempool_size_full_series.update(self.time, len(m.mempool))
 
         demand = random.lognormvariate(m.g, m.sigma_g)
         max_fee = random.lognormvariate(m.f, m.sigma_f)
         tip = random.expovariate(m.pi)
-
         m.gas_demands.record(demand)
         m.max_fees.record(max_fee)
         m.tips.record(tip)
@@ -147,8 +195,9 @@ class TransactionArrival(Event):
         sim.schedule(TransactionArrival(self.time + next_arrival, m))
 
         m.num_transactions += 1
-        m.mempool_size.update(self.time, len(m.mempool))
-
+        m.mempool_size.update(self.time - m.last_cycle_update_time, len(m.mempool))
+        m.mempool_size_full_series.update(self.time, len(m.mempool))
+        
 class Expire(Event):
     def __init__(self, time: float, model: GasMarket, transaction: Transaction) -> None:
         super().__init__(time)
@@ -160,11 +209,17 @@ class Expire(Event):
             return
 
         m = self.model
-        m.mempool_size.update(self.time, len(m.mempool))
+
+        m.mempool_size.update(self.time - m.last_cycle_update_time, len(m.mempool))
+        m.mempool_size_full_series.update(self.time, len(m.mempool))
         self.model.mempool.remove(self.transaction)
-        m.mempool_size.update(self.time, len(m.mempool))
+        m.mempool_size.update(self.time - m.last_cycle_update_time, len(m.mempool))
+        m.mempool_size_full_series.update(self.time, len(m.mempool))
 
         m.num_expiries.increment()
+
+        if len(m.mempool) == 0 and self.time != m.last_cycle_update_time: m.update_cycle(self.time)
+
 
 class BlockProduction(Event):
     def __init__(self, time: float, model: GasMarket):
@@ -180,6 +235,9 @@ class BlockProduction(Event):
         else:
             queue = m.mempool
 
+        m.mempool_size.update(self.time - m.last_cycle_update_time, len(m.mempool))
+        m.mempool_size_full_series.update(self.time, len(m.mempool))
+
         for transaction in reversed(queue):
             if transaction.demand + amount_gas_used > m.gas_limit: continue
             if transaction.max_fee < m.b: continue
@@ -187,6 +245,9 @@ class BlockProduction(Event):
             amount_gas_used += transaction.demand
             m.mempool.remove(transaction)
             m.confirmation_time.record(self.time - transaction.arrival_time)
+
+        m.mempool_size.update(self.time - m.last_cycle_update_time, len(m.mempool))
+        m.mempool_size_full_series.update(self.time, len(m.mempool))
 
         m.block_gas_utilisation.record(amount_gas_used / m.gas_limit)
 
@@ -202,6 +263,10 @@ class BlockProduction(Event):
         m.num_blocks += 1
         sim.schedule(BlockProduction(self.time + next_block_time, m))
 
+        #only want to update this now if we do not update the base fee, otherwise, we want to do this after updating base fee
+        if not m.do_update_base_fee: return
+        if len(m.mempool) == 0 and self.time != m.last_cycle_update_time: m.update_cycle(self.time)
+
 class UpdateBaseFee(Event):
     def __init__(self, time: float, model: GasMarket, amount_gas_used):
         super().__init__(time)
@@ -210,12 +275,18 @@ class UpdateBaseFee(Event):
 
     def execute(self, sim: Simulation) -> None:
         m = self.model
-        m.base_fee.update(self.time, m.b)
+
         #update next base fee
         m.b = max(m.b_min, m.b*(1 + 1 / 8 * (self.amount_gas_used - m.gas_target) / m.gas_target))
-        m.base_fee.update(self.time, m.b)
+        m.base_fee.update(self.time - m.last_cycle_update_time, m.b)
+        m.base_fee_full_series.update(self.time, m.b)
+
+        if len(m.mempool) == 0 and self.time != m.last_cycle_update_time: m.update_cycle(self.time)
 
 if __name__ == "__main__":
-    model = GasMarket(12)
-    model.run(10_000, True)
+    import time
+    start = time.time()
+    model = GasMarket(12, 100_000)
+    model.run()
     model.report()
+    print(f"Simulation ran for {(time.time() - start):.4f} seconds")
