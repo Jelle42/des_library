@@ -167,7 +167,7 @@ class TransactionArrival(Event):
         m = self.model
 
         if self.time > m.batch_times[m.current_batch]:
-            m.save_batch_statistics(self.time)
+            m.save_batch_statistics(self.time - m.batch_times[m.current_batch])
             m.current_batch += 1
 
         if self.time > m.warmup_period: m.mempool_size.update(self.time - m.batch_times[m.current_batch], len(m.mempool))
@@ -206,7 +206,7 @@ class Expire(Event):
 
         m = self.model
         if self.time > m.batch_times[m.current_batch]:
-            m.save_batch_statistics(self.time)
+            m.save_batch_statistics(self.time - m.batch_times[m.current_batch])
             m.current_batch += 1
 
         if self.time > m.warmup_period: m.mempool_size.update(self.time - m.batch_times[m.current_batch], len(m.mempool))
@@ -225,7 +225,7 @@ class BlockProduction(Event):
         m = self.model
 
         if self.time > m.batch_times[m.current_batch]:
-            m.save_batch_statistics(self.time)
+            m.save_batch_statistics(self.time - m.batch_times[m.current_batch])
             m.current_batch += 1
 
         if m.block_capacity is not None:
@@ -265,7 +265,7 @@ class UpdateBaseFee(Event):
         m = self.model
 
         if self.time > m.batch_times[m.current_batch]:
-            m.save_batch_statistics(self.time)
+            m.save_batch_statistics(self.time - m.batch_times[m.current_batch])
             m.current_batch += 1
 
         if self.time > m.warmup_period: m.base_fee.update(self.time - m.batch_times[m.current_batch], m.b)
