@@ -18,6 +18,7 @@ class GasMarket:
             stopping_time: float,
             block_arrival_rate: float | None = 1/12,
             do_expire: bool = True,
+            check_eligibility: bool = True,
             do_update_base_fee: bool = True,
             block_capacity: int | None = None,
             seed: int = 42
@@ -25,6 +26,7 @@ class GasMarket:
         random.seed(seed)
 
         self.do_expire = do_expire
+        self.check_eligibility = check_eligibility
         self.do_update_base_fee = do_update_base_fee
         self.block_capacity = block_capacity
         self.stopping_time = stopping_time
@@ -243,7 +245,7 @@ class BlockProduction(Event):
 
         for transaction in reversed(queue):
             if transaction.demand + amount_gas_used > m.gas_limit: continue
-            if transaction.max_fee < m.b: continue
+            if transaction.max_fee < m.b and m.check_eligibility: continue
             if transaction.expiry_event: transaction.expiry_event.cancel()
             amount_gas_used += transaction.demand
             m.mempool.remove(transaction)
@@ -289,7 +291,11 @@ class UpdateBaseFee(Event):
 if __name__ == "__main__":
     import time
     start = time.time()
-    model = GasMarket(12, 100_000)
-    model.run()
-    model.report()
+    standard_model = GasMarket(12, 100_000)
+    # standard_model.run()
+    # standard_model.report()
+
+    mm1_model = GasMarket(0.05, 100_000, block_arrival_rate=1/12, do_expire=False, check_eligibility=False, do_update_base_fee=False)
+    mm1_model.run()
+    mm1_model.report()
     print(f"Simulation ran for {(time.time() - start):.4f} seconds")

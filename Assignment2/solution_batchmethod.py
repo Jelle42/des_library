@@ -6,6 +6,7 @@ import random
 import os
 import sys
 import bisect
+from scipy.stats import t
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
@@ -17,9 +18,10 @@ class GasMarket:
             transaction_arrival_rate: float,
             stopping_time: float,
             warmup_period: float = 0,
-            num_batches: int = 0,
+            num_batches: int = 1,
             block_arrival_rate: float | None = 1/12,
             do_expire: bool = True,
+            check_eligibility: bool = True,
             do_update_base_fee: bool = True,
             block_capacity: int | None = None,
             seed: int = 42
@@ -27,6 +29,7 @@ class GasMarket:
         random.seed(seed)
 
         self.do_expire = do_expire
+        self.check_eligibility = check_eligibility
         self.do_update_base_fee = do_update_base_fee
         self.block_capacity = block_capacity
         self.stopping_time = stopping_time
@@ -147,6 +150,19 @@ class GasMarket:
             print(f"Avg. Block arrival rate {self.batch_block_arrivals.mean():.4f} vs True mean: {12}")
         print(f"Current batch: {self.current_batch}")
 
+    def check_precision(self, alpha: float, delta: float):
+        r = self.num_batches
+        quantile = t.ppf(1 - alpha/2, r - 1)
+        
+        print(f"Confirmation time: {r >= quantile**2 * self.batch_confirmation_time.variance() / (delta / (1 + delta) * self.batch_confirmation_time.mean())}")
+        print(f"Mempool size: {r >= quantile**2 * self.batch_mempool_size.variance() / (delta / (1 + delta) * self.batch_mempool_size.mean())}")
+        print(f"Block gas utilisation: {r >= quantile**2 * self.batch_block_gas_utilisation.variance() / (delta / (1 + delta) * self.batch_block_gas_utilisation.mean())}")
+        print(f"Base fee: {r >= quantile**2 * self.batch_base_fee.variance() / (delta / (1 + delta) * self.batch_base_fee.mean())}")
+        print(f"Expiry rate: {r >= quantile**2 * self.batch_expiry_rate.variance() / (delta / (1 + delta) * self.batch_expiry_rate.mean())}")
+        print(f"Gas demands: {r >= quantile**2 * self.batch_gas_demands.variance() / (delta / (1 + delta) * self.batch_gas_demands.mean())}")
+        print(f"Max fees: {r >= quantile**2 * self.batch_max_fees.variance() / (delta / (1 + delta) * self.batch_max_fees.mean())}")
+        print(f"Tips: {r >= quantile**2 * self.batch_tips.variance() / (delta / (1 + delta) * self.batch_tips.mean())}")
+
 class Transaction:
     def __init__(
             self,
@@ -177,7 +193,7 @@ class TransactionArrival(Event):
 
         demand = random.lognormvariate(m.g, m.sigma_g)
         max_fee = random.lognormvariate(m.f, m.sigma_f)
-        tip = random.expovariate(m.pi)
+        tip = random.expovariate(1/m.pi)
         if self.time > m.warmup_period:
             m.gas_demands.record(demand)
             m.max_fees.record(max_fee)
@@ -245,7 +261,7 @@ class BlockProduction(Event):
 
         for transaction in reversed(queue):
             if transaction.demand + amount_gas_used > m.gas_limit: continue
-            if transaction.max_fee < m.b: continue
+            if transaction.max_fee < m.b and m.check_eligibility: continue
             if transaction.expiry_event: transaction.expiry_event.cancel()
             amount_gas_used += transaction.demand
             m.mempool.remove(transaction)
@@ -291,9 +307,16 @@ class UpdateBaseFee(Event):
             m.current_batch += 1
 
 if __name__ == "__main__":
+    print("Start")
     import time
     start = time.time()
     model = GasMarket(12, 100_000, 20_000, num_batches=50)
     model.run()
     model.report()
+    model.check_precision(0.05, 0.1)
+
+    # mm1_model = GasMarket(0.05, 100_000, block_arrival_rate=1/12, do_expire=False, check_eligibility=False, do_update_base_fee=False)
+    # mm1_model.run()
+    # mm1_model.report()
+    # mm1_model.check_precision(0.05, 0.1)
     print(f"Simulation ran for {(time.time() - start):.4f} seconds")
