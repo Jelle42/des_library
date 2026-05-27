@@ -131,25 +131,25 @@ class GasMarket:
 
     def report(self):
         t = self.sim.current_time
-        print("Ethereum Gas Market Model")
+        print("Ethereum Gas Market Model (regenerative method)")
         print(f"Horizon time: {t:.4f}")
-        print(f"Avg. confirmation time: {self.cycle_confirmation_time.mean():.4f}")
-        print(f"Avg. mempool size: {self.cycle_mempool_size.mean():.4f}")
+        print(f"Avg. confirmation time: {self.cycle_confirmation_time.mean():.4f}, CI: {self.cycle_confirmation_time.confidence_interval()}")
+        print(f"Avg. mempool size: {self.cycle_mempool_size.mean():.4f}, CI: {self.cycle_mempool_size.confidence_interval()}")
         print(f"Avg. mempool size over full series: {self.mempool_size_full_series.mean(t):.4f}")
-        print(f"Avg. block-gas utilisation: {self.cycle_block_gas_utilisation.mean():.4f}")
-        print(f"Avg. base fee: {self.cycle_base_fee.mean():.4f}")
+        print(f"Avg. block-gas utilisation: {self.cycle_block_gas_utilisation.mean():.4f}, CI: {self.cycle_block_gas_utilisation.confidence_interval()}")
+        print(f"Avg. base fee: {self.cycle_base_fee.mean():.4f}, CI: {self.cycle_base_fee.confidence_interval()}")
         print(f"Avg. base fee over full series: {self.base_fee_full_series.mean(t):.4f}")
-        print(f"Avg. expiry rate: {self.cycle_expiry_rate.mean():.4f}")
+        print(f"Avg. expiry rate: {self.cycle_expiry_rate.mean():.4f}, CI: {self.cycle_expiry_rate.confidence_interval()}")
         print(f"Number of blocks: {self.num_blocks}")
         print(f"Number of transactions: {self.num_transactions}")
-        print(f"Avg. gas demand: {self.cycle_gas_demands.mean():.4f} vs True mean: {50_000}")
-        print(f"Avg. max fee: {self.cycle_max_fees.mean():.4f} vs True mean: {100}")
-        print(f"Avg. tip: {self.cycle_tips.mean():.4f} vs True mean: {1/self.pi:.4f}")
-        print(f"Avg. transaction arrival rate {self.cycle_transaction_arrivals.mean():.4f} vs True mean: {1/self.transaction_arrival_rate:.4f}")
+        print(f"Avg. gas demand: {self.cycle_gas_demands.mean():.4f} vs True mean: {50_000}, CI: {self.cycle_gas_demands.confidence_interval()}")
+        print(f"Avg. max fee: {self.cycle_max_fees.mean():.4f} vs True mean: {100}, CI: {self.cycle_max_fees.confidence_interval()}")
+        print(f"Avg. tip: {self.cycle_tips.mean():.4f} vs True mean: {1/self.pi:.4f}, CI: {self.cycle_tips.confidence_interval()}")
+        print(f"Avg. transaction arrival rate {self.cycle_transaction_arrivals.mean():.4f} vs True mean: {1/self.transaction_arrival_rate:.4f}, CI: {self.cycle_transaction_arrivals.confidence_interval()}")
         if self.block_arrival_rate is not None:
-            print(f"Avg. Block arrival rate {self.cycle_block_arrivals.mean():.4f} vs True mean: {1/self.block_arrival_rate:.4f}")
+            print(f"Avg. Block arrival rate {self.cycle_block_arrivals.mean():.4f} vs True mean: {1/self.block_arrival_rate:.4f}, CI: {self.cycle_block_arrivals.confidence_interval()}")
         else:
-            print(f"Avg. Block arrival rate {self.cycle_block_arrivals.mean():.4f} vs True mean: {12}")
+            print(f"Avg. Block arrival rate {self.cycle_block_arrivals.mean():.4f} vs True mean: {12}, CI: {self.cycle_block_arrivals.confidence_interval()}")
         print(f"Current cycle: {self.current_cycle}")
 
 class Transaction:
@@ -289,13 +289,18 @@ class UpdateBaseFee(Event):
         if len(m.mempool) == 0 and not m.is_cycle_updated: m.update_cycle(self.time)
 
 if __name__ == "__main__":
+    print("Start")
     import time
     start = time.time()
-    standard_model = GasMarket(12, 100_000)
-    # standard_model.run()
-    # standard_model.report()
+    standard_model = GasMarket(12, 200_000)
+    standard_model.run()
+    standard_model.report()
 
-    mm1_model = GasMarket(0.05, 100_000, block_arrival_rate=1/12, do_expire=False, check_eligibility=False, do_update_base_fee=False)
-    mm1_model.run()
-    mm1_model.report()
+    # mm1_model = GasMarket(0.05, 200_000, block_capacity=1, block_arrival_rate=1/12, do_expire=False, check_eligibility=False, do_update_base_fee=False)
+    # mm1_model.run()
+    # mm1_model.report()
+
+    # md1_model = GasMarket(0.05, 200_000, block_capacity=1, block_arrival_rate=None, do_expire=False, check_eligibility=False, do_update_base_fee=False)
+    # md1_model.run()
+    # md1_model.report()
     print(f"Simulation ran for {(time.time() - start):.4f} seconds")

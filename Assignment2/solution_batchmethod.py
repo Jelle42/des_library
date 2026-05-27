@@ -63,15 +63,24 @@ class GasMarket:
         self.current_batch: int = 0 # runs from 0 to num_batches
         self.batch_times = np.linspace(self.warmup_period, self.stopping_time, self.num_batches + 1)
 
+        self.keep_stats = False
+        self.confirmation_time_D: int = 0
+        self.mempool_size_D: int = 0
+        self.block_gas_util_D: int = 0
+        self.base_fee_D: int = 0
         #statistics to keep track of
         self.confirmation_time = SampleStatistic()
+        self.confirmation_time_all: list[float] = []
         self.batch_confirmation_time = SampleStatistic()
         self.mempool_size = TimeWeightedStatistic()
+        self.mempool_size_all: list[float] = []
         self.mempool_size_full_series = TimeWeightedStatistic()
         self.batch_mempool_size = SampleStatistic()
         self.block_gas_utilisation = SampleStatistic()
+        self.block_gas_utilisation_all: list[float] = []
         self.batch_block_gas_utilisation = SampleStatistic()
         self.base_fee = TimeWeightedStatistic()
+        self.base_fee_all: list[float] = []
         self.base_fee_full_series = TimeWeightedStatistic()
         self.batch_base_fee = SampleStatistic()
         self.num_expiries = Counter()
@@ -79,14 +88,19 @@ class GasMarket:
 
         #statistics for all sampled isntances
         self.gas_demands = SampleStatistic()
+        self.gas_demands_all: list[float] = []
         self.batch_gas_demands = SampleStatistic()
         self.max_fees = SampleStatistic()
+        self.max_fees_all: list[float] = []
         self.batch_max_fees = SampleStatistic()
         self.tips = SampleStatistic()
+        self.tips_all: list[float] = []
         self.batch_tips = SampleStatistic()
         self.transaction_arrivals = SampleStatistic()
+        self.transaction_arrivals_all: list[float] = []
         self.batch_transaction_arrivals = SampleStatistic()
         self.block_arrivals = SampleStatistic()
+        self.block_arrivals_all: list[float] = []
         self.batch_block_arrivals = SampleStatistic()
     
     def insert_transaction(self, transaction: Transaction):
@@ -122,32 +136,33 @@ class GasMarket:
         self.transaction_arrivals.reset()
         self.block_arrivals.reset()
         
-    def run(self):
+    def run(self, keep_stats: bool = False):
+        self.keep_stats = keep_stats
         self.sim.schedule(TransactionArrival(0.0, self))
         self.sim.schedule(BlockProduction(0.0, self))
         self.sim.run(lambda sim: sim.current_time > self.stopping_time)
 
     def report(self):
         t = self.sim.current_time
-        print("Ethereum Gas Market Model")
+        print("Ethereum Gas Market Model (Batch method)")
         print(f"Horizon time: {t:.4f}")
-        print(f"Avg. confirmation time: {self.batch_confirmation_time.mean():.4f}")
-        print(f"Avg. mempool size: {self.batch_mempool_size.mean():.4f}")
+        print(f"Avg. confirmation time: {self.batch_confirmation_time.mean():.4f}, CI: {self.batch_confirmation_time.confidence_interval()}")
+        print(f"Avg. mempool size: {self.batch_mempool_size.mean():.4f}, CI: {self.batch_mempool_size.confidence_interval()}")
         print(f"Avg. mempool size over full series {self.mempool_size_full_series.mean(t):.4f}")
-        print(f"Avg. block-gas utilisation {self.batch_block_gas_utilisation.mean():.4f}")
-        print(f"Avg. base fee {self.batch_base_fee.mean():.4f}")
+        print(f"Avg. block-gas utilisation {self.batch_block_gas_utilisation.mean():.4f}, CI: {self.batch_block_gas_utilisation.confidence_interval()}")
+        print(f"Avg. base fee {self.batch_base_fee.mean():.4f}, CI: {self.batch_base_fee.confidence_interval()}")
         print(f"Avg. base fee over full series {self.base_fee_full_series.mean(t):.4f}")
-        print(f"Avg. expiry rate {self.batch_expiry_rate.mean():.4f}")
+        print(f"Avg. expiry rate {self.batch_expiry_rate.mean():.4f}, CI: {self.batch_expiry_rate.confidence_interval()}")
         print(f"Number of blocks: {self.num_blocks}")
         print(f"Number of transactions: {self.num_transactions}")
-        print(f"Avg. gas demand: {self.batch_gas_demands.mean():.4f} vs True mean: {50_000}")
-        print(f"Avg. max fee: {self.batch_max_fees.mean():.4f} vs True mean: {100}")
-        print(f"Avg. tip: {self.batch_tips.mean():.4f} vs True mean: {1/self.pi:.4f}")
-        print(f"Avg. transaction arrival rate {self.batch_transaction_arrivals.mean():.4f} vs True mean: {1/self.transaction_arrival_rate:.4f}")
+        print(f"Avg. gas demand: {self.batch_gas_demands.mean():.4f} vs True mean: {50_000}, CI: {self.batch_gas_demands.confidence_interval()}")
+        print(f"Avg. max fee: {self.batch_max_fees.mean():.4f} vs True mean: {100}, CI: {self.batch_max_fees.confidence_interval()}")
+        print(f"Avg. tip: {self.batch_tips.mean():.4f} vs True mean: {1/self.pi:.4f}, CI: {self.batch_tips.confidence_interval()}")
+        print(f"Avg. transaction arrival rate {self.batch_transaction_arrivals.mean():.4f} vs True mean: {1/self.transaction_arrival_rate:.4f}, CI: {self.batch_transaction_arrivals.confidence_interval()}")
         if self.block_arrival_rate is not None:
-            print(f"Avg. Block arrival rate {self.batch_block_arrivals.mean():.4f} vs True mean: {1/self.block_arrival_rate:.4f}")
+            print(f"Avg. Block arrival rate {self.batch_block_arrivals.mean():.4f} vs True mean: {1/self.block_arrival_rate:.4f}, CI: {self.batch_block_arrivals.confidence_interval()}")
         else:
-            print(f"Avg. Block arrival rate {self.batch_block_arrivals.mean():.4f} vs True mean: {12}")
+            print(f"Avg. Block arrival rate {self.batch_block_arrivals.mean():.4f} vs True mean: {12}, CI: {self.batch_block_arrivals.confidence_interval()}")
         print(f"Current batch: {self.current_batch}")
 
     def check_precision(self, alpha: float, delta: float):
@@ -158,7 +173,7 @@ class GasMarket:
         print(f"Mempool size: {r >= quantile**2 * self.batch_mempool_size.variance() / (delta / (1 + delta) * self.batch_mempool_size.mean())}")
         print(f"Block gas utilisation: {r >= quantile**2 * self.batch_block_gas_utilisation.variance() / (delta / (1 + delta) * self.batch_block_gas_utilisation.mean())}")
         print(f"Base fee: {r >= quantile**2 * self.batch_base_fee.variance() / (delta / (1 + delta) * self.batch_base_fee.mean())}")
-        print(f"Expiry rate: {r >= quantile**2 * self.batch_expiry_rate.variance() / (delta / (1 + delta) * self.batch_expiry_rate.mean())}")
+        # print(f"Expiry rate: {r >= quantile**2 * self.batch_expiry_rate.variance() / (delta / (1 + delta) * self.batch_expiry_rate.mean())}")
         print(f"Gas demands: {r >= quantile**2 * self.batch_gas_demands.variance() / (delta / (1 + delta) * self.batch_gas_demands.mean())}")
         print(f"Max fees: {r >= quantile**2 * self.batch_max_fees.variance() / (delta / (1 + delta) * self.batch_max_fees.mean())}")
         print(f"Tips: {r >= quantile**2 * self.batch_tips.variance() / (delta / (1 + delta) * self.batch_tips.mean())}")
@@ -189,6 +204,8 @@ class TransactionArrival(Event):
         m = self.model
 
         if self.time > m.warmup_period: m.mempool_size.update(self.time - m.batch_times[m.current_batch], len(m.mempool))
+        else: m.mempool_size_D += 1
+        if m.keep_stats:  m.mempool_size_all.append(len(m.mempool))
         m.mempool_size_full_series.update(self.time, len(m.mempool))
 
         demand = random.lognormvariate(m.g, m.sigma_g)
@@ -198,6 +215,10 @@ class TransactionArrival(Event):
             m.gas_demands.record(demand)
             m.max_fees.record(max_fee)
             m.tips.record(tip)
+        if m.keep_stats:
+            m.gas_demands_all.append(demand)
+            m.max_fees_all.append(max_fee)
+            m.tips_all.append(tip)
 
         transaction = Transaction(m, self.time, demand, max_fee, tip)
         m.insert_transaction(transaction)
@@ -208,10 +229,13 @@ class TransactionArrival(Event):
 
         next_arrival = random.expovariate(m.transaction_arrival_rate)
         if self.time > m.warmup_period: m.transaction_arrivals.record(next_arrival)
+        if m.keep_stats: m.transaction_arrivals_all.append(next_arrival)
         sim.schedule(TransactionArrival(self.time + next_arrival, m))
 
         m.num_transactions += 1
         if self.time > m.warmup_period: m.mempool_size.update(self.time - m.batch_times[m.current_batch], len(m.mempool))
+        else: m.mempool_size_D += 1
+        if m.keep_stats: m.mempool_size_all.append(len(m.mempool))
         m.mempool_size_full_series.update(self.time, len(m.mempool))
         
         if self.time > m.batch_times[m.current_batch + 1]:
@@ -231,9 +255,13 @@ class Expire(Event):
         m = self.model
 
         if self.time > m.warmup_period: m.mempool_size.update(self.time - m.batch_times[m.current_batch], len(m.mempool))
+        else: m.mempool_size_D += 1
+        if m.keep_stats: m.mempool_size_all.append(len(m.mempool))
         m.mempool_size_full_series.update(self.time, len(m.mempool))
         self.model.mempool.remove(self.transaction)
         if self.time > m.warmup_period: m.mempool_size.update(self.time - m.batch_times[m.current_batch], len(m.mempool))
+        else: m.mempool_size_D += 1
+        if m.keep_stats: m.mempool_size_all.append(len(m.mempool))
         m.mempool_size_full_series.update(self.time, len(m.mempool))
 
         m.num_expiries.increment()
@@ -257,6 +285,8 @@ class BlockProduction(Event):
             queue = m.mempool
 
         if self.time > m.warmup_period: m.mempool_size.update(self.time - m.batch_times[m.current_batch], len(m.mempool))
+        else: m.mempool_size_D += 1
+        if m.keep_stats: m.mempool_size_all.append(len(m.mempool))
         m.mempool_size_full_series.update(self.time, len(m.mempool))
 
         for transaction in reversed(queue):
@@ -265,12 +295,21 @@ class BlockProduction(Event):
             if transaction.expiry_event: transaction.expiry_event.cancel()
             amount_gas_used += transaction.demand
             m.mempool.remove(transaction)
-            if self.time > m.warmup_period: m.confirmation_time.record(self.time - transaction.arrival_time)
+            if self.time > m.warmup_period: m.confirmation_time.record(self.time - transaction.arrival_time) 
+            else: m.confirmation_time_D += 1
+            if m.keep_stats: m.confirmation_time_all.append(self.time - transaction.arrival_time)
 
         if self.time > m.warmup_period:
             m.mempool_size.update(self.time - m.batch_times[m.current_batch], len(m.mempool))
-            m.mempool_size_full_series.update(self.time, len(m.mempool))
             m.block_gas_utilisation.record(amount_gas_used / m.gas_limit)
+        else: 
+            m.mempool_size_D += 1
+            m.block_gas_util_D += 1
+        if m.keep_stats:
+            m.mempool_size_all.append(len(m.mempool))
+            m.block_gas_utilisation_all.append(amount_gas_used / m.gas_limit)
+
+        m.mempool_size_full_series.update(self.time, len(m.mempool))
 
         if m.do_update_base_fee: sim.schedule(UpdateBaseFee(self.time, m, amount_gas_used))
 
@@ -280,6 +319,7 @@ class BlockProduction(Event):
             next_block_time = 12
 
         if self.time > m.warmup_period: m.block_arrivals.record(next_block_time)
+        if m.keep_stats: m.block_arrivals_all.append(next_block_time)
 
         m.num_blocks += 1
         sim.schedule(BlockProduction(self.time + next_block_time, m))
@@ -300,23 +340,43 @@ class UpdateBaseFee(Event):
         #update next base fee
         m.b = max(m.b_min, m.b*(1 + 1 / 8 * (self.amount_gas_used - m.gas_target) / m.gas_target))
         if self.time > m.warmup_period: m.base_fee.update(self.time - m.batch_times[m.current_batch], m.b)
+        else: m.base_fee_D += 1
+        if m.keep_stats: m.base_fee_all.append(m.b)
         m.base_fee_full_series.update(self.time, m.b)
 
         if self.time > m.batch_times[m.current_batch + 1]:
             m.save_batch_statistics(self.time - m.batch_times[m.current_batch])
             m.current_batch += 1
 
+
 if __name__ == "__main__":
     print("Start")
     import time
     start = time.time()
-    model = GasMarket(12, 100_000, 20_000, num_batches=50)
+    model = GasMarket(12, 200_000, num_batches=50)
     model.run()
     model.report()
-    model.check_precision(0.05, 0.1)
+    # print(f"Warmup period: {warmup}")
+    # print(f"warmup check (confirmation time): {
+    #     abs(sum(model.confirmation_time_all[2*model.confirmation_time_D:]) / (2*sum(model.confirmation_time_all[model.confirmation_time_D:])) - 1)
+    #     }")
+    # print(f"warmup check (mempool size): {
+    #     abs(sum(model.mempool_size_all[2*model.mempool_size_D:]) / (2*sum(model.mempool_size_all[model.mempool_size_D:])) - 1)
+    #     }")
+    # print(f"warmup check (block gas utilisation): {
+    #     abs(sum(model.block_gas_utilisation_all[2*model.block_gas_util_D:]) / (2*sum(model.block_gas_utilisation_all[model.block_gas_util_D:])) - 1)
+    #     }")
+    # print(f"warmup check (base fee): {
+    #     abs(sum(model.base_fee_all[2*model.base_fee_D:]) / (2*sum(model.base_fee_all[model.base_fee_D:])) - 1)
+    #     }")
+    # model.check_precision(0.05, 0.1)
 
-    # mm1_model = GasMarket(0.05, 100_000, block_arrival_rate=1/12, do_expire=False, check_eligibility=False, do_update_base_fee=False)
+    # mm1_model = GasMarket(0.05, 200_000, num_batches=50, block_arrival_rate=1/12, do_expire=False, check_eligibility=False, do_update_base_fee=False, block_capacity=1)
     # mm1_model.run()
     # mm1_model.report()
     # mm1_model.check_precision(0.05, 0.1)
+
+    # md1_model = GasMarket(0.05, 200_000, num_batches=50, block_capacity=1, block_arrival_rate=None, do_expire=False, check_eligibility=False, do_update_base_fee=False)
+    # md1_model.run()
+    # md1_model.report()
     print(f"Simulation ran for {(time.time() - start):.4f} seconds")
