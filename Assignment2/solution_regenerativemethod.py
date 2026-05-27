@@ -72,6 +72,8 @@ class GasMarket:
         self.cycle_base_fee = SampleStatistic()
         self.num_expiries = Counter()
         self.cycle_expiry_rate = SampleStatistic()
+        self.ineligble_frac = TimeWeightedStatistic()
+        self.cycle_inelible_frac = SampleStatistic()
 
         #statistics for all sampled isntances
         self.gas_demands = SampleStatistic()
@@ -97,6 +99,7 @@ class GasMarket:
         self.cycle_block_gas_utilisation.record(self.block_gas_utilisation.mean())
         self.cycle_base_fee.record(self.base_fee.mean(time))
         self.cycle_expiry_rate.record(self.num_expiries.rate(time))
+        self.cycle_inelible_frac.record(self.ineligble_frac.mean(time))
 
         # statistics for all samples instances
         self.cycle_gas_demands.record(self.gas_demands.mean())
@@ -111,6 +114,7 @@ class GasMarket:
         self.block_gas_utilisation.reset()
         self.base_fee.reset()
         self.num_expiries.reset()
+        self.ineligble_frac.reset()
 
         self.gas_demands.reset()
         self.max_fees.reset()
@@ -243,15 +247,20 @@ class BlockProduction(Event):
         m.mempool_size.update(self.time - m.last_cycle_update_time, len(m.mempool))
         m.mempool_size_full_series.update(self.time, len(m.mempool))
 
+        num_ineligble = 0
+        total = len(m.mempool)
         for transaction in reversed(queue):
             if transaction.demand + amount_gas_used > m.gas_limit: continue
-            if transaction.max_fee < m.b and m.check_eligibility: continue
+            if transaction.max_fee < m.b and m.check_eligibility: 
+                num_ineligble += 1
+                continue
             if transaction.expiry_event: transaction.expiry_event.cancel()
             amount_gas_used += transaction.demand
             m.mempool.remove(transaction)
             m.confirmation_time.record(self.time - transaction.arrival_time)
 
         m.mempool_size.update(self.time - m.last_cycle_update_time, len(m.mempool))
+        m.ineligble_frac.update(self.time - m.last_cycle_update_time, num_ineligble / total)
         m.mempool_size_full_series.update(self.time, len(m.mempool))
 
         m.block_gas_utilisation.record(amount_gas_used / m.gas_limit)

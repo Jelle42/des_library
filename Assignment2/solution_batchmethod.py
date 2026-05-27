@@ -85,6 +85,8 @@ class GasMarket:
         self.batch_base_fee = SampleStatistic()
         self.num_expiries = Counter()
         self.batch_expiry_rate = SampleStatistic()
+        self.ineligible_frac = TimeWeightedStatistic()
+        self.batch_ineligible_frac = SampleStatistic()
 
         #statistics for all sampled isntances
         self.gas_demands = SampleStatistic()
@@ -115,6 +117,7 @@ class GasMarket:
         self.batch_block_gas_utilisation.record(self.block_gas_utilisation.mean())
         self.batch_base_fee.record(self.base_fee.mean(time))
         self.batch_expiry_rate.record(self.num_expiries.rate(time))
+        self.batch_ineligible_frac.record(self.ineligible_frac.mean(time))
 
         # statistics for all samples instances
         self.batch_gas_demands.record(self.gas_demands.mean())
@@ -129,6 +132,7 @@ class GasMarket:
         self.block_gas_utilisation.reset()
         self.base_fee.reset()
         self.num_expiries.reset()
+        self.ineligible_frac.reset()
 
         self.gas_demands.reset()
         self.max_fees.reset()
@@ -153,6 +157,7 @@ class GasMarket:
         print(f"Avg. base fee {self.batch_base_fee.mean():.4f}, CI: {self.batch_base_fee.confidence_interval()}")
         print(f"Avg. base fee over full series {self.base_fee_full_series.mean(t):.4f}")
         print(f"Avg. expiry rate {self.batch_expiry_rate.mean():.4f}, CI: {self.batch_expiry_rate.confidence_interval()}")
+        print(f"Avg. ineligible fraction {self.batch_ineligible_frac.mean():.4f}, CI: {self.batch_ineligible_frac.confidence_interval()}")
         print(f"Number of blocks: {self.num_blocks}")
         print(f"Number of transactions: {self.num_transactions}")
         print(f"Avg. gas demand: {self.batch_gas_demands.mean():.4f} vs True mean: {50_000}, CI: {self.batch_gas_demands.confidence_interval()}")
@@ -289,9 +294,13 @@ class BlockProduction(Event):
         if m.keep_stats: m.mempool_size_all.append(len(m.mempool))
         m.mempool_size_full_series.update(self.time, len(m.mempool))
 
+        num_ineligible = 0
+        total = len(m.mempool)
         for transaction in reversed(queue):
             if transaction.demand + amount_gas_used > m.gas_limit: continue
-            if transaction.max_fee < m.b and m.check_eligibility: continue
+            if transaction.max_fee < m.b and m.check_eligibility:
+                num_ineligible += 1
+                continue
             if transaction.expiry_event: transaction.expiry_event.cancel()
             amount_gas_used += transaction.demand
             m.mempool.remove(transaction)
@@ -301,6 +310,7 @@ class BlockProduction(Event):
 
         if self.time > m.warmup_period:
             m.mempool_size.update(self.time - m.batch_times[m.current_batch], len(m.mempool))
+            m.ineligible_frac.update(self.time - m.batch_times[m.current_batch], num_ineligible/total)
             m.block_gas_utilisation.record(amount_gas_used / m.gas_limit)
         else: 
             m.mempool_size_D += 1
