@@ -260,7 +260,7 @@ class BlockProduction(Event):
             m.confirmation_time.record(self.time - transaction.arrival_time)
 
         m.mempool_size.update(self.time - m.last_cycle_update_time, len(m.mempool))
-        m.ineligble_frac.update(self.time - m.last_cycle_update_time, num_ineligble / total)
+        m.ineligble_frac.update(self.time - m.last_cycle_update_time, num_ineligble / total if total != 0 else 1)
         m.mempool_size_full_series.update(self.time, len(m.mempool))
 
         m.block_gas_utilisation.record(amount_gas_used / m.gas_limit)

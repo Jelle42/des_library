@@ -310,7 +310,7 @@ class BlockProduction(Event):
 
         if self.time > m.warmup_period:
             m.mempool_size.update(self.time - m.batch_times[m.current_batch], len(m.mempool))
-            m.ineligible_frac.update(self.time - m.batch_times[m.current_batch], num_ineligible/total)
+            m.ineligible_frac.update(self.time - m.batch_times[m.current_batch], num_ineligible/total if total != 0 else 1)
             m.block_gas_utilisation.record(amount_gas_used / m.gas_limit)
         else: 
             m.mempool_size_D += 1
