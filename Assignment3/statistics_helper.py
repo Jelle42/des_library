@@ -20,11 +20,16 @@ class TimeWeightedBatchStatistic:
         self.last_cycle_update: float = 0.0
         self.current_batch: int = 0
         self.current_cycle: int = 0
+        
+        self.num_samples: int = 0
     
     def update(self, current_time: float, new_value: float):
-        self.running_statistic_batch.update(current_time, new_value)
-        self.running_statistic_regen.update(current_time, new_value)
-        self.running_statistic_full_series.update(current_time, new_value)
+        if current_time > self.batch_times[self.current_batch + 1]:
+            self.new_batch(current_time)
+        self.running_statistic_batch.update(current_time - self.batch_times[self.current_batch], new_value)
+        self.running_statistic_regen.update(current_time - self.batch_times[self.current_batch], new_value)
+        self.running_statistic_full_series.update(current_time - self.batch_times[self.current_batch], new_value)
+        self.num_samples += 1
     
     def new_batch(self, current_time: float):
         self.batch_statistic.record(self.running_statistic_batch.mean(current_time - self.batch_times[self.current_batch]))
@@ -36,19 +41,32 @@ class TimeWeightedBatchStatistic:
         self.running_statistic_regen.reset()
         self.current_cycle += 1
         self.last_cycle_update = current_time
+    
+    def mean(self) -> tuple[float, float]:
+        return self.batch_statistic.mean(), self.regen_statistic.mean()
         
 class SampleBatchStatistic:
-    def __init__(self):
+    def __init__(self, batch_times: list[float]|np.ndarray):
         self.running_statistic_batch = SampleStatistic()
         self.running_statistic_regen = SampleStatistic()
         self.running_statistic_full_series = SampleStatistic()
         self.batch_statistic = SampleStatistic()
         self.regen_statistic = SampleStatistic()
         
-    def record(self, new_value: float):
+        self.batch_times = batch_times
+        self.last_cycle_update: float = 0.0
+        self.current_batch: int = 0
+        self.current_cycle: int = 0
+        
+        self.num_samples: int = 0
+        
+    def record(self, current_time: float, new_value: float):
+        if current_time > self.batch_times[self.current_batch + 1]:
+            self.new_batch(current_time)
         self.running_statistic_batch.record(new_value)
         self.running_statistic_regen.record(new_value)
         self.running_statistic_full_series.record(new_value)
+        self.num_samples += 1
         
     def new_batch(self, current_time: float):
         self.batch_statistic.record(self.running_statistic_batch.mean())
@@ -58,8 +76,11 @@ class SampleBatchStatistic:
         self.regen_statistic.record(self.running_statistic_regen.mean())
         self.running_statistic_regen.reset()
         
+    def mean(self) -> tuple[float, float]:
+        return self.batch_statistic.mean(), self.regen_statistic.mean()
+        
 class RateBatchStatistic:
-    def __init__(self, batch_times: list[float]):
+    def __init__(self, batch_times: list[float]|np.ndarray):
         self.running_counter_batch = Counter()
         self.running_counter_regen = Counter()
         self.running_counter_full_series = Counter()
@@ -71,10 +92,15 @@ class RateBatchStatistic:
         self.current_batch: int = 0
         self.current_cycle: int = 0
         
-    def increment(self, n: int = 1):
+        self.num_samples: int = 0
+        
+    def increment(self, current_time: float, n: int = 1):
+        if current_time > self.batch_times[self.current_batch + 1]:
+            self.new_batch(current_time)
         self.running_counter_batch.increment(n)
         self.running_counter_regen.increment(n)
         self.running_counter_full_series.increment(n)
+        self.num_samples += 1
         
     def new_batch(self, current_time: float):
         self.batch_statistic.record(self.running_counter_batch.rate(current_time - self.batch_times[self.current_batch]))
@@ -85,3 +111,6 @@ class RateBatchStatistic:
         self.regen_statistic.record(self.running_counter_regen.rate(current_time - self.last_cycle_update))
         self.running_counter_regen.reset()
         self.last_cycle_update = current_time
+        
+    def mean(self) -> tuple[float, float]:
+        return self.batch_statistic.mean(), self.regen_statistic.mean()
