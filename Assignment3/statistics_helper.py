@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import os
 import sys
+import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
 from des_library import TimeWeightedStatistic, SampleStatistic, Counter
 
 class TimeWeightedBatchStatistic:
-    def __init__(self, batch_times: list[float]):
+    def __init__(self, batch_times: list[float]|np.ndarray):
         self.running_statistic_batch = TimeWeightedStatistic()
         self.running_statistic_regen = TimeWeightedStatistic()
         self.running_statistic_full_series = TimeWeightedStatistic()
