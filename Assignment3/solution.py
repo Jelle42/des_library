@@ -203,14 +203,19 @@ class CTDepartment:
     
     def report(self):
         print("CTDepartment model")
-        print(f"Horizon time: {self.sim.current_time}")
-        print(f"Number of outpatient calls: {self.num_outpatient_calls.value}")
-        print(f"Number of outpatients arrived: {self.num_outpatient_arrivals.value}")
-        print(f"Number of inpatients arrived: {self.num_inpatient_arrivals.value}")
-        print(f"Number of emergency patients arrived: {self.num_emergency_arrivals.value}")
+        print(f"Horizon time: \t\t\t {self.sim.current_time}")
+        print(f"Number of outpatient calls: \t\t {self.num_outpatient_calls.value}")
+        print(f"Number of outpatients arrived: \t\t {self.num_outpatient_arrivals.value}")
+        print(f"Number of inpatients arrived: \t\t {self.num_inpatient_arrivals.value}")
+        print(f"Number of emergency patients arrived: \t {self.num_emergency_arrivals.value}")
+        
+        # Print statistics in a neatly aligned table
+        max_name = max(len(name) for name in self.statistics)
+        header = f"{('Statistic'):<{max_name}}  {('Batch'):>12}  {('Regen'):>12}  {('Num samples'):>12}"
+        print(header)
         for stat_name, stat in self.statistics.items():
             mean = stat.mean()
-            print(f"{stat_name}: batch: {mean[0]:.4f}, regen: {mean[1]:.4f}, num samples: {stat.num_samples}")
+            print(f"{stat_name:<{max_name}}  {mean[0]:12.4f}  {mean[1]:12.4f}  {stat.num_samples:12d}")
 
 
 class Patient:
@@ -336,10 +341,9 @@ class EndScan(Event):
 if __name__ == "__main__":
     start = time.time()
     
-    stopping_time = 1e4
-    with tqdm(total=stopping_time) as pbar:
-        model = CTDepartment(2, progress_bar=pbar)
-        model.run()
-        model.report()
+    stopping_time = 5e5
+    model = CTDepartment(2, stopping_time=stopping_time, progress_bar=tqdm(total=stopping_time, bar_format = "{desc}: {bar}| {percentage:.1f}% | [{elapsed}<{remaining}"))
+    model.run()
+    model.report()
 
     print(f"Simulation took {(time.time() - start):.4f} seconds")
