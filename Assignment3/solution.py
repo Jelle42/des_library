@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-# import math
+import math
 import numpy as np
 import random
 import os
 import sys
 import bisect
+import time
+from tqdm import tqdm
 # from scipy.stats import t
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
@@ -22,7 +24,8 @@ class CTDepartment:
         morning_hourly_capacity: int = 4,
         afternoon_hourly_capacity: int = 4,
         num_batches: int = 50,
-        stopping_time: float = 1e5,
+        stopping_time: float = 1e4,
+        progress_bar: tqdm|None = None,
         seed: int = 42
         ):
         """
@@ -45,29 +48,15 @@ class CTDepartment:
         self.current_batch = 0
         
         self.day_of_week: int = 0 # runs from 0 to 6 or from monday to sunday.
-        self._last_update_time: float = 0.0
+        self._last_update_hour: float = 0.0
+        self._last_progress_update: float = 0.0
 
         self.sim = Simulation()
-        
-        def update_day(sim: Simulation, event: Event, model: CTDepartment = self):
-            hour = event.time / 60 % 24
-            last_update_hour = model._last_update_time / 60 % 24
-            if not (hour >= 0 and last_update_hour < 24): return
-            # if we are at the next day, update day
-            model.day_of_week = (model.day_of_week + 1) % 7
-            model._last_update_time = event.time
-        
-        def reset_schedule(sim: Simulation, event: Event, model: CTDepartment = self):
-            if model.day_of_week != 0: return
-            #at start of monday, empty schedule and schedule all waiting outpatients
-            self.reset_schedule()
-            for patient in self.outpatient_waiting_list:
-                res = self.find_next_available_day()
-                if res is None: continue
-                self.schedule_outpatient(res[0], res[1], patient, event.time, sim)
     
-        self.sim.on_before_event(update_day)
-        self.sim.on_before_event(reset_schedule)
+        self.sim.on_before_event(self._update_day)
+        self.sim.on_before_event(self._weekly_reset_schedule)
+        if progress_bar is not None:
+            self.sim.on_after_event(lambda sim, event: self._update_progress(sim, event, progress_bar))
 
         self.currently_scanning: list[Patient] = [] # patients that are currently being scanned. Can be at most :num_scanners:
         self.queue: list[Patient] = [] # patients currently waiting in waiting room
@@ -105,6 +94,30 @@ class CTDepartment:
     # a large amount of statistics were defined, while in this assignment, the statistics are more abstracted.
     # Comment on the running time of the code in this assignment.
     
+    def _update_day(self, sim: Simulation, event: Event):
+            hour = (event.time / 60) % 24
+            if hour < self._last_update_hour:  # hour wrapped around (crossed midnight)
+                self.day_of_week = (self.day_of_week + 1) % 7
+            
+            self._last_update_hour = hour
+            
+    def _weekly_reset_schedule(self, sim: Simulation, event: Event):
+            if self.day_of_week != 0: return
+            #at start of monday, empty schedule and schedule all waiting outpatients
+            self.reset_schedule()
+            remaining_patients = []
+            for patient in self.outpatient_waiting_list:
+                res = self.find_next_available_day(event.time)
+                if res is None:
+                    remaining_patients.append(patient)
+                    continue
+                self.schedule_outpatient(res[0], res[1], patient, event.time, sim)
+            self.outpatient_waiting_list = remaining_patients
+    
+    def _update_progress(self, sim: Simulation, event: Event, pbar: tqdm):
+        pbar.update(event.time - self._last_progress_update)
+        self._last_progress_update = event.time
+    
     def new_cycle(self, now: float):
         for statistic in self.statistics.values():
             statistic.new_cycle(now)
@@ -114,8 +127,8 @@ class CTDepartment:
         idx = bisect.bisect_right(keys, (patient.priority, patient.arrival_time))
         self.queue.insert(idx, patient)
         
-        is_weekend = self.day_of_week == 5 or self.day_of_week == 7
-        is_office_hours: bool = 8 <= now/60 % 24 <= 16 and not is_weekend
+        is_weekend = self.day_of_week == 5 or self.day_of_week == 6
+        is_office_hours: bool = 8 <= (now/60) % 24 <= 16 and not is_weekend
         if len(self.currently_scanning) < self.num_scanners and is_office_hours:
             self.start_scanning(patient, now, sim)
         elif len(self.currently_scanning) < self.num_scanners_night and not is_office_hours:
@@ -129,15 +142,15 @@ class CTDepartment:
     def start_scanning(self, patient: Patient, now: float, sim: Simulation):
         self.queue.remove(patient)
         self.currently_scanning.append(patient)
-        
-        self.statistics["Waiting time"].record(now, now - patient.arrival_time)
+
+        self.statistics["Waiting time"].update(now, now - patient.arrival_time)
         match patient.patient_type:
             case "emergency":
-                self.statistics["Emergency patient waiting time"].record(now, now - patient.arrival_time)
+                self.statistics["Emergency patient waiting time"].update(now, now - patient.arrival_time)
             case "in":
-                self.statistics["Inpatient waiting time"].record(now, now - patient.arrival_time)
+                self.statistics["Inpatient waiting time"].update(now, now - patient.arrival_time)
             case "out":
-                self.statistics["Outpatient waiting time"].record(now, now - patient.arrival_time)
+                self.statistics["Outpatient waiting time"].update(now, now - patient.arrival_time)
                 
         scanning_time = random.uniform(10,19)
         sim.schedule(EndScan(now + scanning_time, self, patient))
@@ -146,19 +159,26 @@ class CTDepartment:
         for day in self.schedule.keys():
             self.schedule[day] = ([],[])
             
-    def find_next_available_day(self) -> tuple[int, bool] | None:
+    def find_next_available_day(self, now: float) -> tuple[int, bool] | None:
         '''
         Returns the next day an open schedule slot is available,
         with a boolean whether it is in the morning or not.
         Returns None if no open slot is available this week.
         '''
+        current_hour = math.ceil((now / 60) % 24)
+        current_day = self.day_of_week
+        
+        hours_into_morning = max(min(current_hour - 8, 4), 0)
+        hours_into_afternoon = max(min(current_hour - 12, 4), 0)
+        
         open_mornings: set[int] = set()
         open_afternoons: set[int] = set()
         for day in self.schedule.keys():
+            if day < current_day: continue
             morning_schedule, afternoon_schedule = self.schedule[day]
-            if len(morning_schedule) < self.morning_hourly_capacity*4:
+            if len(morning_schedule) < self.morning_hourly_capacity*(4 - hours_into_morning):
                 open_mornings.add(day)
-            if len(afternoon_schedule) < self.afternoon_hourly_capacity*4:
+            if len(afternoon_schedule) < self.afternoon_hourly_capacity*(4 - hours_into_afternoon):
                 open_afternoons.add(day)
         if len(open_mornings) == len(open_afternoons) == 0:
             return
@@ -169,7 +189,7 @@ class CTDepartment:
         i = int(not is_morning) # 0 if morning, 1 if afternoon
         self.schedule[day][i].append(patient)
         num = (len(self.schedule[day][i]) / ((1-i)*self.morning_hourly_capacity + i*self.afternoon_hourly_capacity)) // 1 # amount of hours between start daypart and start service of patient
-        arrival_time = ((day - self.day_of_week)*24 + 8 + i*4 + num)*60 - (now % 24*60) # amount of minutes until service of patient
+        arrival_time = ((day - self.day_of_week)*24 + 8 + i*4 + num)*60 - (now % (24*60)) # amount of minutes until service of patient
         
         if random.random() < self.outpatient_show_probability:
             #outpatients show up with a probability p_s
@@ -210,7 +230,7 @@ class OutpatientCall(Event):
         
         m.num_outpatient_calls.increment()
         
-        hour = self.time / 60 % 24
+        hour = (self.time / 60) % 24
         is_morning: bool = 8 <= hour <= 12
         is_afternoon: bool = 12 < hour <= 16
         is_weekend: bool = m.day_of_week == 5 or m.day_of_week == 6
@@ -222,7 +242,7 @@ class OutpatientCall(Event):
             return
         
         patient = Patient("out", self.time)
-        res = m.find_next_available_day()
+        res = m.find_next_available_day(self.time)
         if res is None: # did not find available time slot
             m.outpatient_waiting_list.append(patient)
             m.statistics["Waiting list size"].update(self.time, len(m.outpatient_waiting_list))
@@ -314,6 +334,12 @@ class EndScan(Event):
 
 
 if __name__ == "__main__":
-    model = CTDepartment(2)
-    model.run()
-    model.report()
+    start = time.time()
+    
+    stopping_time = 1e4
+    with tqdm(total=stopping_time) as pbar:
+        model = CTDepartment(2, progress_bar=pbar)
+        model.run()
+        model.report()
+
+    print(f"Simulation took {(time.time() - start):.4f} seconds")

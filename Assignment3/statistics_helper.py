@@ -60,7 +60,7 @@ class SampleBatchStatistic:
         
         self.num_samples: int = 0
         
-    def record(self, current_time: float, new_value: float):
+    def update(self, current_time: float, new_value: float):
         if current_time > self.batch_times[self.current_batch + 1]:
             self.new_batch(current_time)
         self.running_statistic_batch.record(new_value)
@@ -94,7 +94,9 @@ class RateBatchStatistic:
         
         self.num_samples: int = 0
         
-    def increment(self, current_time: float, n: int = 1):
+    def update(self, current_time: float, n: int | float = 1):
+        if isinstance(n, float):
+            raise ValueError("n should be an int")
         if current_time > self.batch_times[self.current_batch + 1]:
             self.new_batch(current_time)
         self.running_counter_batch.increment(n)
