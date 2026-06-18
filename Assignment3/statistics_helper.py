@@ -42,6 +42,9 @@ class TimeWeightedBatchStatistic:
     
     def mean(self) -> tuple[float, float]:
         return self.batch_statistic.mean(), self.regen_statistic.mean()
+    
+    def confidence_interval(self, alpha: float = 0.95) -> tuple[tuple[float,float], tuple[float,float]]:
+        return self.batch_statistic.confidence_interval(alpha), self.regen_statistic.confidence_interval(alpha)
         
 class SampleBatchStatistic:
     def __init__(self, batch_times: list[float]|np.ndarray):
@@ -58,7 +61,7 @@ class SampleBatchStatistic:
         
         self.num_samples: int = 0
         
-    def update(self, current_time: float, new_value: float):
+    def record(self, new_value: float):
         self.running_statistic_batch.record(new_value)
         self.running_statistic_regen.record(new_value)
         self.running_statistic_full_series.record(new_value)
@@ -72,9 +75,14 @@ class SampleBatchStatistic:
     def new_cycle(self, current_time: float):
         self.regen_statistic.record(self.running_statistic_regen.mean())
         self.running_statistic_regen.reset()
+        self.current_cycle += 1
+        self.last_cycle_update = current_time
         
     def mean(self) -> tuple[float, float]:
         return self.batch_statistic.mean(), self.regen_statistic.mean()
+    
+    def confidence_interval(self, alpha: float = 0.95) -> tuple[tuple[float,float], tuple[float,float]]:
+        return self.batch_statistic.confidence_interval(alpha), self.regen_statistic.confidence_interval(alpha)
         
 class RateBatchStatistic:
     def __init__(self, batch_times: list[float]|np.ndarray):
@@ -91,9 +99,7 @@ class RateBatchStatistic:
         
         self.num_samples: int = 0
         
-    def update(self, current_time: float, n: int | float = 1):
-        if isinstance(n, float):
-            raise ValueError("n should be an int")
+    def increment(self, n: int = 1):
         self.running_counter_batch.increment(n)
         self.running_counter_regen.increment(n)
         self.running_counter_full_series.increment(n)
@@ -107,7 +113,62 @@ class RateBatchStatistic:
     def new_cycle(self, current_time: float):
         self.regen_statistic.record(self.running_counter_regen.rate(current_time - self.last_cycle_update))
         self.running_counter_regen.reset()
+        self.current_cycle += 1
         self.last_cycle_update = current_time
         
     def mean(self) -> tuple[float, float]:
         return self.batch_statistic.mean(), self.regen_statistic.mean()
+    
+    def confidence_interval(self, alpha: float = 0.95) -> tuple[tuple[float,float], tuple[float,float]]:
+        return self.batch_statistic.confidence_interval(alpha), self.regen_statistic.confidence_interval(alpha)
+    
+class FractionBatchStatistic:
+    def __init__(self, batch_times: list[float]|np.ndarray):
+        self.running_counter_batch = Counter()
+        self.running_counter_regen = Counter()
+        self.running_counter_full_series = Counter()
+        
+        self.running_total_batch = Counter()
+        self.running_total_regen = Counter()
+        self.running_total_full_series = Counter()
+        
+        self.batch_statistic = SampleStatistic()
+        self.regen_statistic = SampleStatistic()
+        
+        self.batch_times = batch_times
+        self.last_cycle_update: float = 0.0
+        self.current_batch: int = 0
+        self.current_cycle: int = 0
+        
+        self.num_samples: int = 0
+        
+    def increment(self, n: int|float = 1):
+        if isinstance(n, float): raise ValueError("n should be an int")
+        self.running_counter_batch.increment(n)
+        self.running_counter_regen.increment(n)
+        self.running_counter_full_series.increment(n)
+        self.num_samples += 1
+    
+    def increment_total(self, n: int = 1):
+        self.running_total_batch.increment(n)
+        self.running_total_regen.increment(n)
+        self.running_total_full_series.increment(n)
+
+    def new_batch(self, current_time: float):
+        self.batch_statistic.record(self.running_counter_batch.fraction(self.running_total_batch.value))
+        self.running_counter_batch.reset()
+        self.running_total_batch.reset()
+        self.current_batch += 1
+        
+    def new_cycle(self, current_time: float):
+        self.regen_statistic.record(self.running_counter_regen.fraction(self.running_total_regen.value))
+        self.running_counter_regen.reset()
+        self.running_total_regen.reset()
+        self.current_cycle += 1
+        self.last_cycle_update = current_time
+        
+    def mean(self) -> tuple[float, float]:
+        return self.batch_statistic.mean(), self.regen_statistic.mean()
+    
+    def confidence_interval(self, alpha: float = 0.95) -> tuple[tuple[float,float], tuple[float,float]]:
+        return self.batch_statistic.confidence_interval(alpha), self.regen_statistic.confidence_interval(alpha)
