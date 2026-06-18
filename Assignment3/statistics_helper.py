@@ -24,10 +24,8 @@ class TimeWeightedBatchStatistic:
         self.num_samples: int = 0
     
     def update(self, current_time: float, new_value: float):
-        if current_time > self.batch_times[self.current_batch + 1]:
-            self.new_batch(current_time)
         self.running_statistic_batch.update(current_time - self.batch_times[self.current_batch], new_value)
-        self.running_statistic_regen.update(current_time - self.batch_times[self.current_batch], new_value)
+        self.running_statistic_regen.update(current_time - self.last_cycle_update, new_value)
         self.running_statistic_full_series.update(current_time - self.batch_times[self.current_batch], new_value)
         self.num_samples += 1
     
@@ -61,8 +59,6 @@ class SampleBatchStatistic:
         self.num_samples: int = 0
         
     def update(self, current_time: float, new_value: float):
-        if current_time > self.batch_times[self.current_batch + 1]:
-            self.new_batch(current_time)
         self.running_statistic_batch.record(new_value)
         self.running_statistic_regen.record(new_value)
         self.running_statistic_full_series.record(new_value)
@@ -71,6 +67,7 @@ class SampleBatchStatistic:
     def new_batch(self, current_time: float):
         self.batch_statistic.record(self.running_statistic_batch.mean())
         self.running_statistic_batch.reset()
+        self.current_batch += 1
     
     def new_cycle(self, current_time: float):
         self.regen_statistic.record(self.running_statistic_regen.mean())
@@ -97,8 +94,6 @@ class RateBatchStatistic:
     def update(self, current_time: float, n: int | float = 1):
         if isinstance(n, float):
             raise ValueError("n should be an int")
-        if current_time > self.batch_times[self.current_batch + 1]:
-            self.new_batch(current_time)
         self.running_counter_batch.increment(n)
         self.running_counter_regen.increment(n)
         self.running_counter_full_series.increment(n)
