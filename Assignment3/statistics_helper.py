@@ -26,7 +26,7 @@ class TimeWeightedBatchStatistic:
     
     def update(self, current_time: float, new_value: float):
         self.num_samples += 1
-        self.running_statistic_full_series.update(current_time - self.batch_times[self.current_batch], new_value)
+        self.running_statistic_full_series.update(current_time, new_value)
         if current_time < self.warmup_period: return
         self.running_statistic_batch.update(current_time - self.batch_times[self.current_batch], new_value)
         self.running_statistic_regen.update(current_time - self.last_cycle_update, new_value)
@@ -51,8 +51,8 @@ class TimeWeightedBatchStatistic:
         self.current_cycle += 1
         self.last_cycle_update = current_time
     
-    def mean(self) -> tuple[float, float]:
-        return self.batch_statistic.mean(), self.regen_statistic.mean()
+    def mean(self, now: float) -> tuple[float, float, float]:
+        return self.batch_statistic.mean(), self.regen_statistic.mean(), self.running_statistic_full_series.mean(now)
     
     def confidence_interval(self, alpha: float = 0.95) -> tuple[tuple[float,float], tuple[float,float]]:
         return self.batch_statistic.confidence_interval(alpha), self.regen_statistic.confidence_interval(alpha)
@@ -100,8 +100,8 @@ class SampleBatchStatistic:
         self.current_cycle += 1
         self.last_cycle_update = current_time
         
-    def mean(self) -> tuple[float, float]:
-        return self.batch_statistic.mean(), self.regen_statistic.mean()
+    def mean(self, now: float) -> tuple[float, float, float]:
+        return self.batch_statistic.mean(), self.regen_statistic.mean(), self.running_statistic_full_series.mean()
     
     def confidence_interval(self, alpha: float = 0.95) -> tuple[tuple[float,float], tuple[float,float]]:
         return self.batch_statistic.confidence_interval(alpha), self.regen_statistic.confidence_interval(alpha)
@@ -149,10 +149,10 @@ class RateBatchStatistic:
         self.current_cycle += 1
         self.last_cycle_update = current_time
         
-    def mean(self) -> tuple[float, float]:
-        return self.batch_statistic.mean(), self.regen_statistic.mean()
+    def mean(self, now: float) -> tuple[float, float, float]:
+        return self.batch_statistic.mean(), self.regen_statistic.mean(), self.running_counter_full_series.rate(now)
     
-    def confidence_interval(self, alpha: float = 0.95) -> tuple[tuple[float,float], tuple[float,float]]:
+    def confidence_interval(self,  alpha: float = 0.95) -> tuple[tuple[float,float], tuple[float,float]]:
         return self.batch_statistic.confidence_interval(alpha), self.regen_statistic.confidence_interval(alpha)
     
 class FractionBatchStatistic:
@@ -208,8 +208,8 @@ class FractionBatchStatistic:
         self.current_cycle += 1
         self.last_cycle_update = current_time
         
-    def mean(self) -> tuple[float, float]:
-        return self.batch_statistic.mean(), self.regen_statistic.mean()
+    def mean(self, now: float) -> tuple[float, float, float]:
+        return self.batch_statistic.mean(), self.regen_statistic.mean(), (self.running_counter_full_series.value / self.running_total_full_series.value if self.running_total_full_series.value != 0 else 0)
     
     def confidence_interval(self, alpha: float = 0.95) -> tuple[tuple[float,float], tuple[float,float]]:
         return self.batch_statistic.confidence_interval(alpha), self.regen_statistic.confidence_interval(alpha)

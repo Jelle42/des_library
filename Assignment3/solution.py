@@ -7,7 +7,7 @@ import os
 import sys
 import bisect
 from tqdm import tqdm
-# from scipy.stats import t
+from typing import Callable
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
@@ -25,6 +25,8 @@ class CTDepartment:
         do_schedule_outpatients: bool = True,
         do_schedule_inpatients: bool = True,
         do_schedule_emergency_patients: bool = True,
+        service_time_distr: Callable = random.uniform,
+        service_time_param: tuple = (10, 19),
         warmup_period: float = 0.0,
         num_batches: int = 50,
         stopping_time: float = 1e4,
@@ -47,12 +49,16 @@ class CTDepartment:
         self.do_schedule_inpatients: bool = do_schedule_inpatients
         self.do_schedule_emergency_patients: bool = do_schedule_emergency_patients
         
+        self.service_time_distribution = service_time_distr
+        self.service_time_param = service_time_param
+        
         self.stopping_time = stopping_time
         self.num_batches = num_batches
         
         self.warmup_period = warmup_period
         self.batch_times = np.linspace(self.warmup_period, self.stopping_time, self.num_batches+1)
-        self.current_batch = 0
+        self.current_batch: int = 0
+        self.current_cycle: int = 0
         
         self.day_of_week: int = 0 # runs from 0 to 6 or from monday to sunday.
         self._last_update_hour: float = 0.0
@@ -160,17 +166,18 @@ class CTDepartment:
     def _check_batch(self, sim: Simulation, event: Event):
         if event.time > self.batch_times[self.current_batch + 1]:
             self.new_batch(event.time)
-            self.current_batch += 1
     
     def _update_progress(self, sim: Simulation, event: Event, pbar: tqdm):
         pbar.update(event.time - self._last_progress_update)
         self._last_progress_update = event.time
     
     def new_cycle(self, now: float):
+        self.current_cycle += 1
         for statistic in self.statistics.values():
             statistic.new_cycle(now)
             
     def new_batch(self, now: float):
+        self.current_batch += 1
         for statistic in self.statistics.values():
             statistic.new_batch(now)
             
@@ -229,7 +236,8 @@ class CTDepartment:
             case "out":
                 self.statistics["Outpatient waiting time"].record(now, now - patient.arrival_time)
                 
-        scanning_time = random.uniform(10,19)
+        # scanning_time = random.uniform(10,19)
+        scanning_time = self.service_time_distribution(*self.service_time_param)
         sim.schedule(EndScan(now + scanning_time, self, patient))
         
     def reset_schedule(self):
@@ -295,31 +303,33 @@ class CTDepartment:
         self.sim.run(lambda sim: sim.current_time > self.stopping_time)
     
     def report(self):
+        t = self.sim.current_time
         print("\nCTDepartment model")
-        print(f"Horizon time: \t\t\t {self.sim.current_time}")
+        print(f"Horizon time: \t\t\t\t {t}")
         print(f"Number of outpatient calls: \t\t {self.num_outpatient_calls.value}")
         print(f"Number of outpatients arrived: \t\t {self.num_outpatient_arrivals.value}")
         print(f"Number of inpatient requests arrived: \t {self.num_inpatient_requests.value}")
         print(f"Number of inpatients arrived: \t\t {self.num_inpatient_arrivals.value}")
         print(f"Number of emergency patients arrived: \t {self.num_emergency_arrivals.value}")
+        print(f"Num batches: \t\t\t\t {self.current_batch}")
+        print(f"Num cycles: \t\t\t\t {self.current_cycle}")
         
         # Print statistics in a neatly aligned table
         max_name = max(len(name) for name in self.statistics)
         ci_width = 25
         header = (
             f"{'Statistic':<{max_name}}  {'Batch':>12}  {'95% CI':>{ci_width}}  "
-            f"{'Regen':>12}  {'95% CI':>{ci_width}}  {'Num samples':>12}  {'Batches':>8}  {'Cycles':>6}"
+            f"{'Regen':>12}  {'95% CI':>{ci_width}}  {'Full series':>12}  {'# Samples':>12}"
         )
         print(header)
         for stat_name, stat in self.statistics.items():
-            mean = stat.mean()
+            mean = stat.mean(t)
             conf_int = stat.confidence_interval()
             ci_batch = f"[{conf_int[0][0]:.4f}, {conf_int[0][1]:.4f}]"
             ci_regen = f"[{conf_int[1][0]:.4f}, {conf_int[1][1]:.4f}]"
             print(
                 f"{stat_name:<{max_name}}  {mean[0]:12.4f}  {ci_batch:>{ci_width}}  "
-                f"{mean[1]:12.4f}  {ci_regen:>{ci_width}}  {stat.num_samples:12d}  "
-                f"{stat.current_batch:8d}  {stat.current_cycle:6d}"
+                f"{mean[1]:12.4f}  {ci_regen:>{ci_width}}  {mean[2]:12.4f}  {stat.num_samples:12d}"
             )
 
 class Patient:
@@ -467,8 +477,27 @@ class EndScan(Event):
             elif not is_office_hours and len(m.currently_scanning) < m.num_scanners_night:
                 m.start_scanning(m.queue[0], self.time, sim)
 
+        if is_office_hours:
+            m.statistics["Scanner utilization in office hours"].update(self.time, len(m.currently_scanning) / m.num_scanners)
+        else:
+            m.statistics["Scanner utilization outside office hours"].update(self.time, len(m.currently_scanning) / m.num_scanners_night)
+
 if __name__ == "__main__":
     stopping_time = 1e6
-    model = CTDepartment(num_scanners=2, num_scanners_night=1, stopping_time=stopping_time, progress_bar=tqdm(total=stopping_time, bar_format = "{desc}: {bar}| {percentage:.1f}% | [{elapsed}s]"))
-    model.run()
-    model.report()
+    # Verification cases:
+    # compare M/G/1 model (service time B ~ U[10,19]) with simulated results: Wq = ~2.3846 min, Lq = ~0.0397, W = ~16.88 min, L = ~0.2814
+    # M/G/2: Wq = 0.111, Lq = 0.00185
+    c = 2
+    # mgc_model = CTDepartment(num_scanners=c, num_scanners_night=c, do_schedule_inpatients=False, do_schedule_outpatients=False, stopping_time=stopping_time, progress_bar=tqdm(total=stopping_time, bar_format = "{desc}: {bar}| {percentage:.1f}% | [{elapsed}s]"))
+    # mgc_model.run()
+    # mgc_model.report()
+    
+    # M/M/1: Wq = 5.0, Lq = 0.08333...
+    # M/M/2: Wq = 0.2381, L_1 = 0.00397
+    mmc_model = CTDepartment(num_scanners=c, num_scanners_night=c, service_time_distr=random.expovariate, service_time_param=(1/15,), do_schedule_inpatients=False, do_schedule_outpatients=False, stopping_time=stopping_time, progress_bar=tqdm(total=stopping_time, bar_format = "{desc}: {bar}| {percentage:.1f}% | [{elapsed}s]"))
+    mmc_model.run()
+    mmc_model.report()
+    
+    # model = CTDepartment(num_scanners=2, num_scanners_night=1, stopping_time=stopping_time, progress_bar=tqdm(total=stopping_time, bar_format = "{desc}: {bar}| {percentage:.1f}% | [{elapsed}s]"))
+    # model.run()
+    # model.report()
