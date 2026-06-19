@@ -8,6 +8,7 @@ import sys
 import bisect
 from tqdm import tqdm
 from typing import Callable
+from scipy.stats import t
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 
@@ -157,12 +158,11 @@ class CTDepartment:
         travel_time = random.uniform(9,15)
         self._inpatient_is_traveling = True
         sim.schedule(InpatientArrival(event.time + travel_time, self, patient))
-        
-            
+
     def _check_regen_condition(self, sim: Simulation, event: Event):
         condition = len(self.currently_scanning) == 0
         if condition: self.new_cycle(event.time)
-    
+
     def _check_batch(self, sim: Simulation, event: Event):
         if event.time > self.batch_times[self.current_batch + 1]:
             self.new_batch(event.time)
@@ -296,6 +296,25 @@ class CTDepartment:
             # outpatients show up with a probability p_s
             sim.schedule(OutpatientArrival(now + arrival_time, self, patient))
             
+    def validate_num_batches(self, precision: float = 0.05, confidence: float = 0.95):
+        r = self.num_batches
+        quantile = t.ppf(1 - confidence / 2, r - 1)
+        for stat_name, stat in self.statistics.items():
+            value = quantile**2 * stat.batch_statistic.variance() / (precision / (1 + precision) * stat.batch_statistic.mean())**2
+            if self.num_batches < value:
+                print(f"{stat_name} did nos pass batch number validation")
+                print(f"expression: {value:.4f}")
+
+    def validate_warmup(self, precision: float = 0.05):
+        if self.warmup_period == 0.0: raise ValueError("Cannot validate nonexistent warmup") 
+        for stat_name, stat in self.statistics.items():
+            expression = abs(stat.warmup_checks[1] / stat.warmup_checks[0] - 1)
+            if expression > precision:
+                print(f"{stat_name} did not pass warmup validation")
+            else:
+                print(f"{stat_name} passed warmup validation")
+            print(f"expression: {expression:.4f}")
+
     def run(self):
         if self.do_schedule_outpatients: self.sim.schedule(OutpatientCall(0.0, self))
         if self.do_schedule_inpatients: self.sim.schedule(InpatientRequestArrival(0.0, self))
@@ -421,17 +440,17 @@ class InpatientArrival(Event):
         super().__init__(time)
         self.model = model
         self.patient = patient
-    
+
     def execute(self, sim: Simulation):
         m = self.model
-        
+
         m.num_inpatient_arrivals.increment()
         m.statistics["Inpatient access time"].record(self.time, self.time - self.patient.arrival_time)
-        
+
         self.patient.arrival_time = self.time
         m.insert_patient(self.patient, self.time, sim)
         m._inpatient_is_traveling = False
-        
+
         m.statistics["Fraction inpatients scanned outside office hours"].increment_total(self.time)
         is_office_hours = 8 <= (self.time / 60) % 24 <= 16 and m.day_of_week != 5 and m.day_of_week != 6
         if not is_office_hours: m.statistics["Fraction inpatients scanned outside office hours"].increment(self.time)
@@ -483,7 +502,7 @@ class EndScan(Event):
             m.statistics["Scanner utilization outside office hours"].update(self.time, len(m.currently_scanning) / m.num_scanners_night)
 
 if __name__ == "__main__":
-    stopping_time = 1e6
+    stopping_time = 1e8
     # Verification cases:
     # compare M/G/1 model (service time B ~ U[10,19]) with simulated results: Wq = ~2.3846 min, Lq = ~0.0397, W = ~16.88 min, L = ~0.2814
     # M/G/2: Wq = 0.111, Lq = 0.00185
@@ -494,10 +513,13 @@ if __name__ == "__main__":
     
     # M/M/1: Wq = 5.0, Lq = 0.08333...
     # M/M/2: Wq = 0.2381, L_1 = 0.00397
-    mmc_model = CTDepartment(num_scanners=c, num_scanners_night=c, service_time_distr=random.expovariate, service_time_param=(1/15,), do_schedule_inpatients=False, do_schedule_outpatients=False, stopping_time=stopping_time, progress_bar=tqdm(total=stopping_time, bar_format = "{desc}: {bar}| {percentage:.1f}% | [{elapsed}s]"))
-    mmc_model.run()
-    mmc_model.report()
+    # mmc_model = CTDepartment(num_scanners=c, num_scanners_night=c, service_time_distr=random.expovariate, service_time_param=(1/15,), do_schedule_inpatients=False, do_schedule_outpatients=False, stopping_time=stopping_time, progress_bar=tqdm(total=stopping_time, bar_format = "{desc}: {bar}| {percentage:.1f}% | [{elapsed}s]"))
+    # mmc_model.run()
+    # mmc_model.report()
+    # mmc_model.validate_num_batches()
     
-    # model = CTDepartment(num_scanners=2, num_scanners_night=1, stopping_time=stopping_time, progress_bar=tqdm(total=stopping_time, bar_format = "{desc}: {bar}| {percentage:.1f}% | [{elapsed}s]"))
-    # model.run()
-    # model.report()
+    model = CTDepartment(num_scanners=2, num_scanners_night=1, warmup_period=1e7, stopping_time=stopping_time, progress_bar=tqdm(total=stopping_time, bar_format = "{desc}: {bar}| {percentage:.1f}% | [{elapsed}s]"))
+    model.run()
+    model.report()
+    model.validate_num_batches()
+    model.validate_warmup()

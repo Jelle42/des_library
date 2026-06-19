@@ -16,6 +16,8 @@ class TimeWeightedBatchStatistic:
         self.batch_statistic = SampleStatistic()
         self.regen_statistic = SampleStatistic()
         
+        self.warmup_checks: list[float] = []
+        
         self.batch_times = batch_times
         self.warmup_period = warmup_period
         self.last_cycle_update: float = 0.0
@@ -28,6 +30,10 @@ class TimeWeightedBatchStatistic:
         self.num_samples += 1
         self.running_statistic_full_series.update(current_time, new_value)
         if current_time < self.warmup_period: return
+        if len(self.warmup_checks) == 0:
+            self.warmup_checks.append(self.running_statistic_full_series.mean(current_time))
+        if current_time >= 2*self.warmup_period and len(self.warmup_checks) == 1:
+            self.warmup_checks.append(self.running_statistic_full_series.mean(current_time))
         self.running_statistic_batch.update(current_time - self.batch_times[self.current_batch], new_value)
         self.running_statistic_regen.update(current_time - self.last_cycle_update, new_value)
         
@@ -65,6 +71,8 @@ class SampleBatchStatistic:
         self.batch_statistic = SampleStatistic()
         self.regen_statistic = SampleStatistic()
         
+        self.warmup_checks: list[float] = []
+        
         self.batch_times = batch_times
         self.warmup_period = warmup_period
         self.last_cycle_update: float = 0.0
@@ -77,6 +85,10 @@ class SampleBatchStatistic:
         self.num_samples += 1
         self.running_statistic_full_series.record(new_value)
         if current_time < self.warmup_period: return
+        if len(self.warmup_checks) == 0:
+            self.warmup_checks.append(self.running_statistic_full_series.mean())
+        if current_time >= 2*self.warmup_period and len(self.warmup_checks) == 1:
+            self.warmup_checks.append(self.running_statistic_full_series.mean())
         self.running_statistic_batch.record(new_value)
         self.running_statistic_regen.record(new_value)
         
@@ -114,6 +126,8 @@ class RateBatchStatistic:
         self.batch_statistic = SampleStatistic()
         self.regen_statistic = SampleStatistic()
         
+        self.warmup_checks: list[float] = []
+        
         self.batch_times = batch_times
         self.warmup_period = warmup_period
         self.last_cycle_update: float = 0.0
@@ -126,6 +140,10 @@ class RateBatchStatistic:
         self.num_samples += 1
         self.running_counter_full_series.increment(n)
         if current_time < self.warmup_period: return
+        if len(self.warmup_checks) == 0:
+            self.warmup_checks.append(self.running_counter_full_series.rate(current_time))
+        if current_time >= 2*self.warmup_period and len(self.warmup_checks) == 1:
+            self.warmup_checks.append(self.running_counter_full_series.rate(current_time))
         self.running_counter_batch.increment(n)
         self.running_counter_regen.increment(n)
     
@@ -165,6 +183,8 @@ class FractionBatchStatistic:
         self.running_total_regen = Counter()
         self.running_total_full_series = Counter()
         
+        self.warmup_checks: list[float] = []
+        
         self.batch_statistic = SampleStatistic()
         self.regen_statistic = SampleStatistic()
         
@@ -180,6 +200,10 @@ class FractionBatchStatistic:
         self.running_counter_full_series.increment(n)
         self.num_samples += 1
         if current_time < self.warmup_period: return
+        if len(self.warmup_checks) == 0:
+            self.warmup_checks.append(self.running_counter_full_series.fraction(self.running_total_full_series.value))
+        if current_time >= 2*self.warmup_period and len(self.warmup_checks) == 1:
+            self.warmup_checks.append(self.running_counter_full_series.fraction(self.running_total_full_series.value))
         self.running_counter_batch.increment(n)
         self.running_counter_regen.increment(n)
     
