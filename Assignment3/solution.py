@@ -263,7 +263,7 @@ class CTDepartment:
                 open_afternoons.add((day, len(afternoon_schedule)))
         if len(open_mornings) == len(open_afternoons) == 0:
             return
-        next_available_day, amount_people_scheduled = min(open_mornings.union(open_afternoons), key=lambda tup: (tup[0], 0 if tup[0] in open_mornings else 1, tup[1]))
+        next_available_day, amount_people_scheduled = min(open_mornings.union(open_afternoons), key=lambda tup: (tup[0], 0 if tup in open_mornings else 1, tup[1]))
         return next_available_day, (next_available_day, amount_people_scheduled) in open_mornings, amount_people_scheduled
     
     def schedule_outpatient(self, day: int, is_morning: bool, patient: Patient, now: float, sim: Simulation,  minutes: float = 0.0):
