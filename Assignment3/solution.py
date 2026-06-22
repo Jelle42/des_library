@@ -380,7 +380,7 @@ class CTDepartment:
             else:
                 ci_batch = f"[{conf_int[0][0]*7/5:.4f}, {conf_int[0][1]*7/5:.4f}]"
                 print(
-                    f"{("... per working day"):<{max_name}}  {mean[0] * 7 / 5:12.4f}  {ci_batch:>{ci_width}}  "
+                    f"{stat_name:<{max_name}}  {mean[0] * 7 / 5:12.4f}  {ci_batch:>{ci_width}}  "
                     f"{mean[2]*7/5:12.4f}"
                 )
             
