@@ -369,11 +369,21 @@ class CTDepartment:
             if stat.num_samples == 0: continue
             mean = stat.mean(t)
             conf_int = stat.confidence_interval()
-            ci_batch = f"[{conf_int[0][0]:.4f}, {conf_int[0][1]:.4f}]"
-            print(
-                f"{stat_name:<{max_name}}  {mean[0]:12.4f}  {ci_batch:>{ci_width}}  "
-                f"{mean[2]:12.4f}"
-            )
+            if stat_name != "Scanner utilization in office hours": 
+                # we treat weekends as if they count as well because of the TimeWeightedStatistic.
+                # Because of this, we need to readjust our statistic.
+                ci_batch = f"[{conf_int[0][0]:.4f}, {conf_int[0][1]:.4f}]"
+                print(
+                    f"{stat_name:<{max_name}}  {mean[0]:12.4f}  {ci_batch:>{ci_width}}  "
+                    f"{mean[2]:12.4f}"
+                )
+            else:
+                ci_batch = f"[{conf_int[0][0]*7/5:.4f}, {conf_int[0][1]*7/5:.4f}]"
+                print(
+                    f"{("... per working day"):<{max_name}}  {mean[0] * 7 / 5:12.4f}  {ci_batch:>{ci_width}}  "
+                    f"{mean[2]*7/5:12.4f}"
+                )
+            
 
 class Patient:
     def __init__(self, patient_type: str, arrival_time: float,):
