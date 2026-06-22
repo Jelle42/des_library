@@ -93,7 +93,7 @@ class CTDepartment:
         
         # arrival rates per minute (:time: is in minutes)
         self.outpatient_arrival_rate = 23/8 / 60
-        self.inpatient_arrival_rate = lambda time: (3 / 8 + 81 * np.pi / 48 * abs(np.sin(np.pi/3*(time/(60) - 9)))) / 60 if 9 <= time / 60 <= 15 else (3 / 8) / 60
+        self.inpatient_arrival_rate = lambda time: (3 / 8 + 27 / 8 * (1 - np.cos(2 * np.pi / 3 * (time / 60 - 9)))) / 60 if 9 <= time / 60 <= 15 else (3 / 8) / 60
         self.emergency_arrival_rate = 1/60
         
         self.outpatient_show_probability: float = 0.84
@@ -190,6 +190,7 @@ class CTDepartment:
             case "emergency":
                 self.statistics["Fraction emergency patients wait outside"].increment_total(now)
                 if is_full: self.statistics["Fraction emergency patients wait outside"].increment(now)
+            
         
         keys = [(pat.priority, pat.arrival_time) for pat in self.queue]
         idx = bisect.bisect_right(keys, (patient.priority, patient.arrival_time))
@@ -219,6 +220,8 @@ class CTDepartment:
         # update queue size after removal so time-weighted statistic records the decrease
         self.statistics["Queue size"].update(now, len(self.queue))
         self.currently_scanning.append(patient)
+        
+        patient.start_scanning_time = now
 
         self.statistics["Waiting time"].record(now, now - patient.arrival_time)
         match patient.patient_type:
@@ -272,6 +275,7 @@ class CTDepartment:
         capacity = self.morning_hourly_capacity if is_morning else self.afternoon_hourly_capacity
         num = ((len(self.hourly_schedule[day][i]) - 1) // capacity)
 
+        # do not schedule in past
         part_start = 8 + i * 4
         if day == self.day_of_week:
             current_minutes = now % (24 * 60)
@@ -281,6 +285,7 @@ class CTDepartment:
                 earliest_slot = math.ceil(elapsed / 60)
                 num = max(num, earliest_slot)
 
+        # how long until scheduled appointment
         arrival_time = ((day - self.day_of_week) * 24 + part_start + num) * 60 - (now % (24 * 60)) + minutes
         if arrival_time < 0:
             arrival_time += 24 * 60
@@ -289,7 +294,7 @@ class CTDepartment:
             # outpatients show up with a probability p_s
             sim.schedule(OutpatientArrival(now + arrival_time, self, patient))
             
-    def validate_num_batches(self, precision: float = 0.05, confidence: float = 0.95):
+    def validate_num_batches(self, precision: float = 0.1, confidence: float = 0.95):
         r = self.num_batches
         quantile = _t_critical(1 - confidence / 2, r - 1)
         for stat_name, stat in self.statistics.items():
@@ -333,7 +338,7 @@ class CTDepartment:
         ci_width = 25
         header = (
             f"{'Statistic':<{max_name}}  {'Batch':>12}  {'95% CI':>{ci_width}}  "
-            f"{'Regen':>12}  {'95% CI':>{ci_width}}  {'Full series':>12}"
+            f"{'Full series':>12}"
         )
         print(header)
         for stat_name, stat in self.statistics.items():
@@ -341,10 +346,9 @@ class CTDepartment:
             mean = stat.mean(t)
             conf_int = stat.confidence_interval()
             ci_batch = f"[{conf_int[0][0]:.4f}, {conf_int[0][1]:.4f}]"
-            ci_regen = f"[{conf_int[1][0]:.4f}, {conf_int[1][1]:.4f}]"
             print(
                 f"{stat_name:<{max_name}}  {mean[0]:12.4f}  {ci_batch:>{ci_width}}  "
-                f"{mean[1]:12.4f}  {ci_regen:>{ci_width}}  {mean[2]:12.4f}"
+                f"{mean[2]:12.4f}"
             )
 
 class Patient:
@@ -352,6 +356,7 @@ class Patient:
         if patient_type != "in" and patient_type != "out" and patient_type != "emergency": raise ValueError("Invalid patient type")
         self.patient_type = patient_type
         self.arrival_time = arrival_time
+        self.start_scanning_time: float|None = None
         self.request_time: float|None = None
         self.priority = 0 if patient_type == "emergency" else 1 # emergency patients have priority 0, others have priority 1
 
@@ -384,7 +389,7 @@ class OutpatientCall(Event):
         else:
             next_available_day, is_scheduled_in_morning, amount_people_scheduled = res
             capacity = m.morning_hourly_capacity if is_scheduled_in_morning else m.afternoon_hourly_capacity
-            m.schedule_outpatient(next_available_day, is_scheduled_in_morning, patient, self.time, sim, 60 * amount_people_scheduled / capacity)
+            m.schedule_outpatient(next_available_day, is_scheduled_in_morning, patient, self.time, sim, 60 * math.floor(4*(amount_people_scheduled / capacity)) / 4)
                 
         # schedule next arrival
         next_arrival_time = random.expovariate(m.outpatient_arrival_rate)
@@ -421,7 +426,7 @@ class InpatientRequestArrival(Event):
         m.recieve_inpatient_request(patient, self.time, sim)
         
         # schedule next event
-        lamb_0 = (3 / 8 + 81*np.pi / 48) / 60
+        lamb_0 = (3 / 8 + 27 / 4) / 60
         arrival_time: float|None = None
         arrival_time = self.time
         while True: # thinning process
@@ -481,14 +486,16 @@ class EndScan(Event):
     def execute(self, sim: Simulation):
         m = self.model
         
+        assert self.patient.start_scanning_time is not None
+        
         m.num_scanned_patients.increment()
         
         hour = self.time / 60 % 24
         is_weekend: bool = m.day_of_week == 5 or m.day_of_week == 6
         is_office_hours: bool = 8 <= hour <= 16 and not is_weekend
-
+        
         m.currently_scanning.remove(self.patient)
-
+        
         if m.queue:
             if is_office_hours and len(m.currently_scanning) < m.num_scanners:
                 m.start_scanning(m.queue[0], self.time, sim)
@@ -501,7 +508,7 @@ class EndScan(Event):
             m.statistics["Scanner utilization outside office hours"].update(self.time, len(m.currently_scanning) / m.num_scanners_night)
 
 if __name__ == "__main__":
-    stopping_time = 1e8
+    stopping_time = 1e7
     # Verification cases:
     # compare M/G/1 model (service time B ~ U[10,19]) with simulated results: Wq = ~2.3846 min, Lq = ~0.0397, W = ~16.88 min, L = ~0.2814
     # M/G/2: Wq = 0.111, Lq = 0.00185
@@ -511,13 +518,13 @@ if __name__ == "__main__":
     # mgc_model.report()
     
     # M/M/1: Wq = 5.0, Lq = 0.08333...
-    # M/M/2: Wq = 0.2381, L_1 = 0.00397
+    # M/M/2: Wq = 0.2381, Lq = 0.00397
     # mmc_model = CTDepartment(num_scanners=c, num_scanners_night=c, service_time_distr=random.expovariate, service_time_param=(1/15,), do_schedule_inpatients=False, do_schedule_outpatients=False, stopping_time=stopping_time, progress_bar=tqdm(total=stopping_time, bar_format = "{desc}: {bar}| {percentage:.2f}% | [{elapsed}s]"))
     # mmc_model.run()
     # mmc_model.report()
     # mmc_model.validate_num_batches()
     
-    model = CTDepartment(num_scanners=2, num_scanners_night=1, warmup_period=2e7, num_batches=50, stopping_time=stopping_time, progress_bar=tqdm(total=stopping_time, bar_format = "{desc}: {bar}| {percentage:.2f}% | [{elapsed}s]"))
+    model = CTDepartment(num_scanners=2, num_scanners_night=1, warmup_period=0.0, num_batches=50, stopping_time=stopping_time, progress_bar=tqdm(total=stopping_time, bar_format = "{desc}: {bar}| {percentage:.2f}% | [{elapsed}s]"))
     model.run()
     model.report()
     # model.validate_num_batches(precision=0.1)
