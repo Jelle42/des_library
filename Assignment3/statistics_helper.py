@@ -26,14 +26,17 @@ class TimeWeightedBatchStatistic:
         
         self.num_samples: int = 0
     
-    def update(self, current_time: float, new_value: float):
+    def update(self, current_time: float, new_value: float, update_time: float|None = None):
         self.num_samples += 1
         self.running_statistic_full_series.update(current_time, new_value)
+        
         if current_time < self.warmup_period: return
+        
         if len(self.warmup_checks) == 0:
             self.warmup_checks.append(self.running_statistic_full_series.mean(current_time))
         if current_time >= 2*self.warmup_period and len(self.warmup_checks) == 1:
             self.warmup_checks.append(self.running_statistic_full_series.mean(current_time))
+            
         self.running_statistic_batch.update(current_time - self.batch_times[self.current_batch], new_value)
         self.running_statistic_regen.update(current_time - self.last_cycle_update, new_value)
         

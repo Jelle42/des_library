@@ -201,11 +201,9 @@ class CTDepartment:
         if is_office_hours:
             while self.queue and len(self.currently_scanning) < self.num_scanners:
                 self.start_scanning(self.queue[0], now, sim)
-            self.statistics["Scanner utilization in office hours"].update(now, len(self.currently_scanning) / self.num_scanners)
         else:
             while self.queue and len(self.currently_scanning) < self.num_scanners_night:
                 self.start_scanning(self.queue[0], now, sim)
-            self.statistics["Scanner utilization outside office hours"].update(now, len(self.currently_scanning) / self.num_scanners_night)
 
         self.statistics["Queue size"].update(now, len(self.queue))
         
@@ -221,6 +219,13 @@ class CTDepartment:
         self.statistics["Queue size"].update(now, len(self.queue))
         self.currently_scanning.append(patient)
         
+        office_time = self.calculate_office_time(now)
+        is_office_hours = 8 <= now / 60 % 24 <= 16 and self.day_of_week < 5
+        if is_office_hours:
+            self.statistics["Scanner utilization in office hours"].update(now, len(self.currently_scanning) / self.num_scanners)
+        else:
+            self.statistics["Scanner utilization outside office hours"].update(now, len(self.currently_scanning) / self.num_scanners_night)
+
         patient.start_scanning_time = now
 
         self.statistics["Waiting time"].record(now, now - patient.arrival_time)
@@ -293,6 +298,25 @@ class CTDepartment:
         if random.random() < self.outpatient_show_probability:
             # outpatients show up with a probability p_s
             sim.schedule(OutpatientArrival(now + arrival_time, self, patient))
+            
+    def calculate_office_time(self, now: float) -> float:
+        hours = now / 60
+        completed_days = int(hours // 24)
+        completed_weeks = int(completed_days // 7)
+        yesterday = completed_days % 7
+        
+        office_time_from_week = completed_weeks * 5 * 8 * 60
+        office_time_from_day = yesterday * 8 * 60 if yesterday < 5 else 5 * 8 * 60
+        hours_into_day = hours % 24
+        office_time_today = None
+        if hours_into_day < 8:
+            office_time_today = 0.0
+        elif hours_into_day <= 16:
+            office_time_today = (hours_into_day - 8) * 60
+        else:
+            office_time_today = 8 * 60
+        
+        return office_time_from_week + office_time_from_day + office_time_today
             
     def validate_num_batches(self, precision: float = 0.1, confidence: float = 0.95):
         r = self.num_batches
@@ -502,6 +526,8 @@ class EndScan(Event):
             elif not is_office_hours and len(m.currently_scanning) < m.num_scanners_night:
                 m.start_scanning(m.queue[0], self.time, sim)
 
+        office_time = m.calculate_office_time(self.time)
+        
         if is_office_hours:
             m.statistics["Scanner utilization in office hours"].update(self.time, len(m.currently_scanning) / m.num_scanners)
         else:
