@@ -5,11 +5,11 @@ import numpy as np
 class DPFiniteHorizon:
     def __init__(
             self,
-            state_space: np.ndarray,
-            decision_space: list[np.ndarray],
+            state_space: list[int],
+            decision_space: list[list[int]],
             num_stages: int,
-            transition_probs: list[list[np.ndarray]],
-            immediate_costs: list[np.ndarray],
+            transition_probs: list[list[list[float]]],
+            immediate_costs: list[list[float]],
             objective: str = "max",
             traverse_asc: bool = True,
         ):
@@ -17,7 +17,7 @@ class DPFiniteHorizon:
         Defines a Dynamic Program with finite horizon.
         traverses stages from 1, ..., *num_stages* if *traverse_asc* = True, and from *num_stages*, *num_stages*-1, ..., 1 otherwise.
         """
-        n = state_space.shape[0]
+        n = len(state_space)
         if len(decision_space) != n:
             raise ValueError("decision_space must have one decision list per state")
         if len(transition_probs) != n:
@@ -35,35 +35,33 @@ class DPFiniteHorizon:
         self.traverse_asc = traverse_asc
 
         for state_idx, decisions in enumerate(decision_space):
-            if decisions.ndim != 1:
-                raise ValueError(f"Decision space for state {state_idx} must be a 1D array")
-            if len(transition_probs[state_idx]) != decisions.shape[0]:
+            if len(transition_probs[state_idx]) != len(decisions):
                 raise ValueError(
-                    f"State {state_idx} has {decisions.shape[0]} decisions but {len(transition_probs[state_idx])} transition rows"
+                    f"State {state_idx} has {len(decisions)} decisions but {len(transition_probs[state_idx])} transition rows"
                 )
-            if immediate_costs[state_idx].shape != (decisions.shape[0],):
+            if len(immediate_costs[state_idx]) != len(decisions):
                 raise ValueError(
-                    f"Immediate costs for state {state_idx} must have shape {(decisions.shape[0],)}, got {immediate_costs[state_idx].shape}"
+                    f"Immediate costs for state {state_idx} must have shape {len(decisions)}, got {len(immediate_costs[state_idx])}"
                 )
             for action_idx, prob in enumerate(transition_probs[state_idx]):
-                if prob.shape != (n,):
+                if len(prob) != n:
                     raise ValueError(
-                        f"Transition probability vector for state {state_idx}, decision {action_idx} must have length {n}, got {prob.shape}"
+                        f"Transition probability vector for state {state_idx}, decision {action_idx} must have length {n}, got {len(prob)}"
                     )
-                if (prob < 0).any():
+                if True in {p < 0 for p in prob}:
                     raise ValueError(
                         f"Transition probs for state {state_idx}, decision {action_idx} contains negative values"
                     )
-                if not np.isclose(prob.sum(), 1.0):
+                if not np.isclose(sum(prob), 1.0):
                     raise ValueError(
-                        f"Transition probs for state {state_idx}, decision {action_idx} must sum to 1, got {prob.sum()}"
+                        f"Transition probs for state {state_idx}, decision {action_idx} must sum to 1, got {sum(prob)}"
                     )
         if objective not in {"max", "min"}:
             raise ValueError("Invalid objective")
 
         self.optimal_decisions: dict[tuple[int, int], int] = {}
 
-    def f(self, state: int, stage: int, known_values: np.ndarray) -> float:
+    def f(self, state: int, stage: int, known_values: list[float]) -> float:
         if state not in self.state_index:
             raise ValueError("Invalid state")
         state_idx = self.state_index[state]
@@ -98,26 +96,26 @@ class DPFiniteHorizon:
         self.optimal_decisions[(stage, state)] = optimal_decision
         return objective_value
 
-    def solve(self, known_values: np.ndarray) -> np.ndarray:
-        if known_values.shape != self.state_space.shape:
+    def solve(self, known_values: list[float]) -> list[float]:
+        if len(known_values) != len(self.state_space):
             raise ValueError(
-                f"known_values is not of desired shape, expected {self.state_space.shape}, got {known_values.shape}"
+                f"known_values is not of desired shape, expected {len(self.state_space)}, got {len(known_values)}"
             )
         desired_stage = 1 if self.traverse_asc else self.num_stages - 1
-        return np.array([self.f(state, desired_stage, known_values) for state in self.state_space])
+        return [self.f(state, desired_stage, known_values) for state in self.state_space]
     
 class DPInfiniteHorizon:
     def __init__(self,
-            state_space: np.ndarray,
-            decision_space: list[np.ndarray],
-            transition_probs: list[list[np.ndarray]],
-            immediate_costs: list[np.ndarray],
+            state_space:list[int],
+            decision_space: list[list[int]],
+            transition_probs: list[list[list[float]]],
+            immediate_costs: list[list[float]],
             objective: str = "max",
         ):
         """
         Defines a Dynamic Program with infinite horizon, also called a Markov Decision problem.
         """
-        n = state_space.shape[0]
+        n = len(state_space)
         if len(decision_space) != n:
             raise ValueError("decision_space must have one decision list per state")
         if len(transition_probs) != n:
@@ -133,33 +131,31 @@ class DPInfiniteHorizon:
         self.objective = objective
 
         for state_idx, decisions in enumerate(decision_space):
-            if decisions.ndim != 1:
-                raise ValueError(f"Decision space for state {state_idx} must be a 1D array")
-            if len(transition_probs[state_idx]) != decisions.shape[0]:
+            if len(transition_probs[state_idx]) != len(decisions):
                 raise ValueError(
-                    f"State {state_idx} has {decisions.shape[0]} decisions but {len(transition_probs[state_idx])} transition rows"
+                    f"State {state_idx} has {len(decisions)} decisions but {len(transition_probs[state_idx])} transition rows"
                 )
-            if immediate_costs[state_idx].shape != (decisions.shape[0],):
+            if len(immediate_costs[state_idx]) != len(decisions):
                 raise ValueError(
-                    f"Immediate costs for state {state_idx} must have shape {(decisions.shape[0],)}, got {immediate_costs[state_idx].shape}"
+                    f"Immediate costs for state {state_idx} must have shape {len(decisions)}, got {len(immediate_costs[state_idx])}"
                 )
             for action_idx, prob in enumerate(transition_probs[state_idx]):
-                if prob.shape != (n,):
+                if len(prob) != n:
                     raise ValueError(
-                        f"Transition probability vector for state {state_idx}, decision {action_idx} must have length {n}, got {prob.shape}"
+                        f"Transition probability vector for state {state_idx}, decision {action_idx} must have length {n}, got {len(prob)}"
                     )
-                if (prob < 0).any():
+                if True in {p < 0 for p in prob}:
                     raise ValueError(
                         f"Transition probs for state {state_idx}, decision {action_idx} contains negative values"
                     )
-                if not np.isclose(prob.sum(), 1.0):
+                if not np.isclose(sum(prob), 1.0):
                     raise ValueError(
-                        f"Transition probs for state {state_idx}, decision {action_idx} must sum to 1, got {prob.sum()}"
+                        f"Transition probs for state {state_idx}, decision {action_idx} must sum to 1, got {sum(prob)}"
                     )
         if objective not in {"max", "min"}:
             raise ValueError("Invalid objective")
         
-    def value_iter_discount(self, discount_factor: float = 0.95, epsilon: float = 1e-4) -> tuple[list[float], int]:
+    def value_iter_discount(self, discount_factor: float = 0.95, epsilon: float = 1e-4) -> tuple[list[float], dict[int,int], int]:
         obj = max if self.objective == "max" else min
         value_func: list[float] = [
             obj([
@@ -184,9 +180,9 @@ class DPInfiniteHorizon:
                         optimal_decision[state] = decision
             termination_check = max(abs(value_func[i] - prev_value_func[i]) for i in self.state_space)
             if termination_check < epsilon * (1 - discount_factor) / (2*discount_factor): break
-        return value_func, iteration
+        return value_func, optimal_decision, iteration
     
-    def value_iter_average(self, epsilon: float = 1e-4):
+    def value_iter_average(self, epsilon: float = 1e-4) -> tuple[list[float], dict[int,int], float, int]:
         obj = max if self.objective == "max" else min
         value_func: list[float] = [
             obj([
@@ -212,38 +208,101 @@ class DPInfiniteHorizon:
             max_check = max(abs(value_func[i] - prev_value_func[i]) for i in self.state_space)
             min_check = min(abs(value_func[i] - prev_value_func[i]) for i in self.state_space)
             if 0 <= max_check - min_check <= epsilon * min_check: break
-        return (min_check + max_check) / 2
+        return value_func, optimal_decision, (min_check + max_check) / 2, iteration
+    
+    def policy_iter_discount(self, discount_factor: float, init_policy: dict[int,int]) -> tuple[dict[int,int], int]:
+        r = [self.immediate_costs[state_idx][init_policy[state_idx]] for state_idx in range(len(self.state_space))]
+        P = np.array([[discount_factor * prob for prob in self.transition_probs[state_idx][init_policy[state_idx]]]
+            for state_idx in range(len(self.state_space))
+        ])
+        value_func: list[float] = [float(v) for v in np.linalg.solve(np.identity(len(r)) - P, r)]
+        policy = init_policy.copy()
+        iteration = 0
+        while True:
+            iteration += 1
+            prev_value_func = value_func[:]
+            prev_policy = policy.copy()
+            
+            for state_idx in range(len(self.state_space)):
+                for decision in self.decision_space[state_idx]:
+                    expr = self.immediate_costs[state_idx][decision] + discount_factor*sum(
+                        self.transition_probs[state_idx][decision][next_state]*prev_value_func[next_state]
+                        for next_state in range(len(self.state_space))
+                    )
+                    if expr > value_func[state_idx] and self.objective == "max" or expr < value_func[state_idx] and self.objective == "min":
+                        value_func[state_idx] = expr
+                        policy[state_idx] = decision
+            
+            if prev_policy == policy:
+                break
+        return policy, iteration
+    
+    def policy_iter_average(self, init_policy: dict[int, int]) -> tuple[dict[int,int], float, int]:
+        n = len(self.state_space)
+        s = 0 # arbitrarily chosen reference state, v_s = 0
+        policy = init_policy.copy()
+        iteration = 0
+        
+        while True:
+            r = [self.immediate_costs[state_idx][policy[state_idx]] for state_idx in range(n)]
+            P = np.array([
+                [prob for prob in self.transition_probs[state_idx][policy[state_idx]]]
+                for state_idx in range(n)
+            ])
+            A = np.identity(n) - P
+            A = np.delete(A, s, axis=1)
+            A = np.hstack([A, np.ones((n, 1))])
+            solution = np.linalg.solve(A, r)
+            v, g = solution[:-1], float(solution[-1])
+            value_func = [float(val) for val in np.insert(v, s, 0.0)]
+            iteration += 1
+            
+            prev_value_func = value_func[:]
+            prev_policy = policy.copy()
+            
+            for state_idx in range(len(self.state_space)):
+                for decision in self.decision_space[state_idx]:
+                    expr = self.immediate_costs[state_idx][decision] - g + sum(
+                        self.transition_probs[state_idx][decision][next_state]*prev_value_func[next_state]
+                        for next_state in range(len(self.state_space))
+                    )
+                    if expr > value_func[state_idx] and self.objective == "max" or expr < value_func[state_idx] and self.objective == "min":
+                        value_func[state_idx] = expr
+                        policy[state_idx] = decision
+            
+            if prev_policy == policy:
+                break
+            
+        return policy, g, iteration
     
 if __name__ == "__main__":
     dp = DPInfiniteHorizon(
-        state_space=np.array([0, 1, 2]),
+        state_space=[0, 1, 2],
         decision_space=[
-            np.array([0, 1]),
-            np.array([0, 1, 2]),
-            np.array([0, 1])
+            [0, 1],
+            [0, 1, 2],
+            [0, 1]
         ],
         transition_probs=[
             [
-                np.array([0.0, 0.0, 1.0]),
-                np.array([0.9, 0.1, 0.0]),
+                [0.0, 0.0, 1.0],
+                [0.9, 0.1, 0.0],
             ],
             [
-                np.array([0.5, 0.5, 0.0]),
-                np.array([0.0, 0.8, 0.2]),
-                np.array([0.1, 0.0, 0.9]),
+                [0.5, 0.5, 0.0],
+                [0.0, 0.8, 0.2],
+                [0.1, 0.0, 0.9],
             ],
             [
-                np.array([0.2, 0.8, 0.0]),
-                np.array([0.0, 0.3, 0.7]),
+                [0.2, 0.8, 0.0],
+                [0.0, 0.3, 0.7],
             ],
         ],
         immediate_costs=[
-            np.array([2.0, 3.0]),
-            np.array([1.0, 4.0, 2.0]),
-            np.array([5.0, 1.0]),
+            [2.0, 3.0],
+            [1.0, 4.0, 2.0],
+            [5.0, 1.0],
         ],
     )
-    values, it = dp.value_iter_discount(discount_factor=0.99, epsilon=1e-32)
-    print(values)
-    print(it)
+    print(dp.policy_iter_average({0:0, 1:0, 2:0}))
     
