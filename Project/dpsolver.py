@@ -38,6 +38,15 @@ class SDP:
         self.num_stages = num_stages
         self.objective = objective
         self.traverse_asc = traverse_asc
+        
+        # checks whether valid inputs were given
+        for (state, decision), probs in transition_probs.items():
+            if len(probs.values()) != len(state_space):
+                raise ValueError(f"Mismatch in number of states in transition probabilities of State-decision pair ({state}, {decision})")
+            if sum(probs.values()) != 1:
+                raise ValueError(f"State-decision pair ({state}, {decision}) has transition probabilities that do not sum to 1.")
+            for prob in probs.values():
+                if prob < 0: raise ValueError(f"State-decision pair ({state}, {decision}) has negative transition probabilities.")
 
         if objective not in {"max", "min"}:
             raise ValueError("Invalid objective")
@@ -104,6 +113,15 @@ class MDP:
         self.transition_probs = transition_probs
         self.immediate_costs = immediate_costs
         self.objective = objective
+        
+        # checks whether valid inputs were given
+        for (state, decision), probs in transition_probs.items():
+            if len(probs.values()) != len(state_space):
+                raise ValueError(f"Mismatch in number of states in transition probabilities of State-decision pair ({state}, {decision})")
+            if sum(probs.values()) != 1:
+                raise ValueError(f"State-decision pair ({state}, {decision}) has transition probabilities that do not sum to 1.")
+            for prob in probs.values():
+                if prob < 0: raise ValueError(f"State-decision pair ({state}, {decision}) has negative transition probabilities.")
 
         if objective not in {"max", "min"}:
             raise ValueError("Invalid objective")
@@ -122,17 +140,17 @@ class MDP:
             iteration += 1
             prev_value_func = value_func.copy()
             for state in self.state_space:
-                val = prev_value_func[state]
                 for decision in self.decision_space[state]:
                     expr = self.immediate_costs[(state, decision)] + discount_factor * sum(
                         self.transition_probs[(state, decision)][next_state] * prev_value_func[next_state]
                         for next_state in self.state_space
                         )
-                    if expr < val and self.objective == "min" or expr > val and self.objective == "max":
+                    if expr < value_func[state] and self.objective == "min" or expr > value_func[state] and self.objective == "max":
                         value_func[state] = expr
                         optimal_decision[state] = decision
             termination_check = max(abs(value_func[i] - prev_value_func[i]) for i in self.state_space)
-            if termination_check < epsilon * (1 - discount_factor) / (2*discount_factor): break
+            if termination_check < epsilon * (1 - discount_factor) / (2*discount_factor):
+                break
         return value_func, optimal_decision, iteration
     
     def value_iter_average(self, epsilon: float = 1e-4) -> tuple[dict[StateType, float], dict[StateType, DecisionType], float, int]:
@@ -149,13 +167,12 @@ class MDP:
             iteration += 1
             prev_value_func = value_func.copy()
             for state in self.state_space:
-                val = prev_value_func[state]
                 for decision in self.decision_space[state]:
                     expr = self.immediate_costs[(state, decision)] +  sum(
                         self.transition_probs[(state, decision)][next_state] * prev_value_func[next_state]
                         for next_state in self.state_space
                         )
-                    if expr < val and self.objective == "min" or expr > val and self.objective == "max":
+                    if expr < value_func[state] and self.objective == "min" or expr > value_func[state] and self.objective == "max":
                         value_func[state] = expr
                         optimal_decision[state] = decision
             max_check = max(abs(value_func[i] - prev_value_func[i]) for i in self.state_space)
@@ -232,17 +249,19 @@ if __name__ == "__main__":
     states = [0, 1, 2, 4]
     decisions = {
         0: [1, 2],
-        1: [0, 4, 5],
+        1: [0, 4, 1],
         2: [2, 3],
         4: [0],
     }
     trans_probs = {
-        (i, a): {j: 1 / len(decisions[j]) for j in states} for i in states for a in decisions[i] 
+        (i, a): {j: 1 / len(states) for j in states} for i in states for a in decisions[i] 
     }
     immediate_costs = {
         (i, a): float(a) for i in states for a in decisions[i]
     }
     
     mdp = MDP(states, decisions, trans_probs, immediate_costs)
-    print(mdp.value_iter_average()[1:])
-    print(mdp.policy_iter_average({i: decisions[i][0] for i in states}))
+    print("Value iter avg.:", mdp.value_iter_average()[1:])
+    print("Policy iter avg.:", mdp.policy_iter_average({i: decisions[i][0] for i in states}))
+    print("Value iter discount β=0.95:", mdp.value_iter_discount(0.95)[1:])
+    print("Policy iter discount β=0.95:", mdp.policy_iter_discount(0.95, {i: decisions[i][0] for i in states}))
