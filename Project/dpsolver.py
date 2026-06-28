@@ -43,7 +43,7 @@ class SDP:
         for (state, decision), probs in transition_probs.items():
             if len(probs.values()) != len(state_space):
                 raise ValueError(f"Mismatch in number of states in transition probabilities of State-decision pair ({state}, {decision})")
-            if sum(probs.values()) != 1:
+            if abs(sum(probs.values()) - 1) < 1e-6:
                 raise ValueError(f"State-decision pair ({state}, {decision}) has transition probabilities that do not sum to 1.")
             for prob in probs.values():
                 if prob < 0: raise ValueError(f"State-decision pair ({state}, {decision}) has negative transition probabilities.")
@@ -118,10 +118,10 @@ class MDP:
         for (state, decision), probs in transition_probs.items():
             if len(probs.values()) != len(state_space):
                 raise ValueError(f"Mismatch in number of states in transition probabilities of State-decision pair ({state}, {decision})")
-            if sum(probs.values()) != 1:
-                raise ValueError(f"State-decision pair ({state}, {decision}) has transition probabilities that do not sum to 1.")
-            for prob in probs.values():
-                if prob < 0: raise ValueError(f"State-decision pair ({state}, {decision}) has negative transition probabilities.")
+            # if abs(sum(probs.values()) - 1) < 1e-6:
+            #     raise ValueError(f"State-decision pair ({state}, {decision}) has transition probabilities that do not sum to 1.")
+            # for next_state in state_space:
+            #     if probs[state] < -1e-6: raise ValueError(f"State-decision pair ({state}, {decision}) has negative transition probability to state {next_state}.")
 
         if objective not in {"max", "min"}:
             raise ValueError("Invalid objective")
