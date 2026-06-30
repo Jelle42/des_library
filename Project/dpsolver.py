@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import numpy as np
+from typing import Sequence, Mapping
 
 # =================================================================================
 # types for clarity:
 # =================================================================================
-StateType = int # describes states
-StateSpaceType = list[StateType] # collection of states
-DecisionType = int # describes a decision
-DecisionSpaceType = dict[StateType, list[DecisionType]] # maps a state to all possible decisions in that state
-TransitionProbabilitiesType = dict[tuple[StateType, DecisionType], dict[StateType, float]] # maps a tuple (state, decision) to a map state -> prob
-CostFuncType = dict[tuple[StateType, DecisionType], float] # maps a tuple (state, decision) to an immediate cost/reward
 StageType = int
+StateType = int # describes states
+StateSpaceType = Sequence[StateType] # collection of states
+DecisionType = int # describes a decision
+DecisionSpaceType = Mapping[StateType, Sequence[DecisionType]] # maps a state to all possible decisions in that state
+TransitionProbabilitiesType = Mapping[tuple[StateType, DecisionType], Mapping[StateType, float]] # maps a tuple (state, decision) to a map state -> prob
+SDPTransitionProbabilitiesType = Mapping[tuple[StateType, DecisionType, StageType], Mapping[StateType, float]] # maps a tuple (state, decision, stage) to a map state -> prob
+CostFuncType = Mapping[tuple[StateType, DecisionType], float] # maps a tuple (state, decision) to an immediate cost/reward
 # =================================================================================
 
 # =================================================================================
@@ -22,7 +24,7 @@ class SDP:
             state_space: StateSpaceType,
             decision_space: DecisionSpaceType,
             num_stages: StageType,
-            transition_probs: TransitionProbabilitiesType,
+            transition_probs: SDPTransitionProbabilitiesType,
             immediate_costs: CostFuncType,
             objective: str = "max",
             traverse_asc: bool = True,
@@ -33,27 +35,29 @@ class SDP:
         """
         self.state_space = state_space
         self.decision_space = decision_space
+        self.num_stages = num_stages
         self.transition_probs = transition_probs
         self.immediate_costs = immediate_costs
-        self.num_stages = num_stages
         self.objective = objective
         self.traverse_asc = traverse_asc
         
         # checks whether valid inputs were given
-        for (state, decision), probs in transition_probs.items():
-            if len(probs.values()) != len(state_space):
-                raise ValueError(f"Mismatch in number of states in transition probabilities of State-decision pair ({state}, {decision})")
-            if abs(sum(probs.values()) - 1) < 1e-6:
-                raise ValueError(f"State-decision pair ({state}, {decision}) has transition probabilities that do not sum to 1.")
-            for prob in probs.values():
-                if prob < 0: raise ValueError(f"State-decision pair ({state}, {decision}) has negative transition probabilities.")
+        # for (state, decision, stage), probs in transition_probs.items():
+        #     if abs(sum(probs.values()) - 1) >= 1e-6:
+        #         raise ValueError(f"State-decision-stage pair ({state}, {decision}, {stage}) has transition probabilities that do not sum to 1, instead they sum to {sum(probs.values())}.")
+        #     for prob in probs.values():
+        #         if prob < 0: raise ValueError(f"State-decision-stage pair ({state}, {decision}, {stage}) has negative transition probabilities.")
 
         if objective not in {"max", "min"}:
             raise ValueError("Invalid objective")
 
-        self.optimal_decisions: dict[tuple[StageType, StateType], DecisionType] = {}
+        self.optimal_decisions: dict[tuple[StateType, StageType], DecisionType] = {}
+        self.computed_values: dict[tuple[StateType, StageType], float] = {}
 
     def f(self, state: StateType, stage: StageType, known_values: dict[StateType, float]) -> float:
+        if (state, stage) in self.computed_values:
+            return self.computed_values[(state, stage)]
+        
         if state not in self.state_space:
             raise ValueError("Invalid state")
         if stage == self.num_stages and self.traverse_asc or stage == 0 and not self.traverse_asc:
@@ -65,9 +69,9 @@ class SDP:
 
         for decision in self.decision_space[state]:
             immediate_cost = self.immediate_costs[(state, decision)]
-            trans_prob = self.transition_probs[(state, decision)]
+            trans_prob = self.transition_probs[(state, decision, stage)]
             expected_future = sum(
-                trans_prob[next_state] * self.f(next_state, next_stage, known_values)
+                trans_prob[next_state] * self.f(next_state, next_stage, known_values) if next_state in trans_prob else 0.0
                 for next_state in self.state_space
             )
             value = immediate_cost + expected_future
@@ -84,7 +88,9 @@ class SDP:
         if optimal_decision is None:
             raise Exception("No valid decision found")
 
-        self.optimal_decisions[(stage, state)] = optimal_decision
+        self.optimal_decisions[(state, stage)] = optimal_decision
+        self.computed_values[(state,stage)] = objective_value
+        
         return objective_value
 
     def solve(self, known_values: dict[StateType, float]) -> tuple[dict[StateType, float], dict[tuple[StateType, StageType], DecisionType]]:
@@ -162,7 +168,7 @@ class MDP:
                 ]) for state in self.state_space
         }
         iteration = 0
-        optimal_decision: dict[int, int] = {}
+        optimal_decision: dict[StateType, DecisionType] = {}
         while True:
             iteration += 1
             prev_value_func = value_func.copy()
@@ -246,6 +252,7 @@ class MDP:
         return policy, g, iteration
     
 if __name__ == "__main__":
+    num_stages = 10
     states = [0, 1, 2, 4]
     decisions = {
         0: [1, 2],
@@ -256,12 +263,12 @@ if __name__ == "__main__":
     trans_probs = {
         (i, a): {j: 1 / len(states) for j in states} for i in states for a in decisions[i] 
     }
+    trans_probs2 = {
+        (i, a, n): {j: 1 / len(states) for j in states} for n in range(num_stages) for i in states for a in decisions[i]
+    }
     immediate_costs = {
         (i, a): float(a) for i in states for a in decisions[i]
     }
     
-    mdp = MDP(states, decisions, trans_probs, immediate_costs)
-    print("Value iter avg.:", mdp.value_iter_average()[1:])
-    print("Policy iter avg.:", mdp.policy_iter_average({i: decisions[i][0] for i in states}))
-    print("Value iter discount β=0.95:", mdp.value_iter_discount(0.95)[1:])
-    print("Policy iter discount β=0.95:", mdp.policy_iter_discount(0.95, {i: decisions[i][0] for i in states}))
+    sdp = SDP(states, decisions, num_stages, trans_probs2, immediate_costs)
+    print(sdp.f(states[0], 1, {state: 1/(state+1) for state in states}))

@@ -21,15 +21,18 @@ def C(c: int, rho: float) -> float:
     return pi_c / (pi_c + sum((c*rho)**j / math.factorial(j) for j in range(c))) 
                 
 def station_pmf(rho: float, c: int, pi_c: float, pi_0: float, kmax: int = 500):
+    '''Returns the probability mass function of how many people have to wait'''
     arr = np.zeros(kmax+1)
     arr[0] = pi_0
     for k in range(1, kmax + 1):
         if k < c:
-            arr[k] = (c * rho)**c / math.factorial(k) * pi_0
+            arr[k] = (c * rho)**k / math.factorial(k) * pi_0
         elif k == c:
             arr[k] = pi_c
         else:
             arr[k] = rho**(k-c) * pi_c
+    arr[0] = sum(arr[i] for i in range(c))
+    arr = np.delete(arr, range(1,c))
     return arr
 
 
@@ -54,18 +57,18 @@ def find_num_chairs(arrival_rates: list[float]|np.ndarray, distributions: list[D
     total_pmf = marginals[0]
     for m in marginals[1:]:
         total_pmf = np.convolve(total_pmf, m)
-        
+
     total_pmf = total_pmf / total_pmf.sum()
-        
+
     cdf = np.cumsum(total_pmf)
-    
+
     for k in range(kmax + 1):
         if 1 - cdf[k] < alpha:
             print("Chairs needed: ", k)
             break
     
     return cdf
-    
+
 if __name__ == "__main__":
     # service desk: 0, anesthesist: 1, CPM: 2, Additional tests: 3, home: 4
     P = np.array([
@@ -76,9 +79,7 @@ if __name__ == "__main__":
         [0, 0, 0, 0, 0],
     ])
     gamma = np.array([8.3, 0, 0, 0, 0])
-    # print(solve_traffic_eq(P, gamma))
     arrival_rates = [float(l) for l in solve_traffic_eq(P, gamma)]
-    print(arrival_rates)
     arrival_rates.pop()
     arrival_rates.insert(0, 1+2.625+2.415)
-    print(find_num_chairs(arrival_rates, [Exponential(14.5), Gamma(1.01, 2.6931), Gamma(1.03, 18.7736), Gamma(1.02, 24.7861), Normal(10.27, 5.617)], [2, 1, 3 ,2, 1], 0.01, kmax=400))
+    find_num_chairs(arrival_rates, [Exponential(14.5), Gamma(1.01, 2.6931), Gamma(1.03, 18.7736), Gamma(1.02, 24.7861), Normal(10.27, 5.617)], [2, 1, 4 ,2, 1], 0.01, kmax=100)

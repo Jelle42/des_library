@@ -171,9 +171,9 @@ class Normal(Distribution):
     
 class Gamma(Distribution):
     """Gamma distribution with parameters *alpha* and *beta*"""
-    def __init__(self, alpha: float, beta: float) -> None:
-        self.alpha = alpha
-        self.beta = beta
+    def __init__(self, shape: float, scale: float) -> None:
+        self.alpha = shape
+        self.beta = 1/scale
         
     def sample(self) -> float:
         return random.gammavariate(self.alpha, self.beta)
