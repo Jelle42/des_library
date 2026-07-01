@@ -18,12 +18,10 @@ from des_library.Assignment3.statistics_helper import *
 class CTDepartment:
     def __init__(
         self,
-        scanner_schedule: dict[int, tuple[int, int, int]] = {i: (2,2,1) for i in range(7)}, # maps day to (num_scanners morning, num_scanners afternoon, num_scanners_outside_office)
-        num_scanners: int = 2,
-        num_scanners_night: int = 1,
+        scanner_schedule: Callable[..., dict[int, tuple[int, int, int]]] = lambda _: {i: (2,2,1) for i in range(7)},
         num_chairs: int = 3,
         morning_hourly_capacity: int = 4,
-        afternoon_hourly_capacity: int = 3,
+        afternoon_hourly_capacity: int = 4,
         do_schedule_outpatients: bool = True,
         do_schedule_inpatients: bool = True,
         do_schedule_emergency_patients: bool = True,
@@ -36,14 +34,13 @@ class CTDepartment:
         seed: int = 42
         ):
         """
-        Model a CT department with :num_scanners: scanners, :num_scanners_night: of those scanners available outside office hours,
-        waiting room capacity of :num_chairs:. :morning_hourly_capacity: outpatients can be scheduled each hour from 8.00 to 12.00,
+        Model a CT department with a waiting room capacity of :num_chairs:.
+        :morning_hourly_capacity: outpatients can be scheduled each hour from 8.00 to 12.00,
         :afternoon_hourly_capacity: outpatients can be scheduled each our from 12.00 to 16.00.
         """
         random.seed(seed)
         
-        self.num_scanners: int = num_scanners
-        self.num_scanners_night: int = num_scanners_night
+        self.scanner_schedule = scanner_schedule
         self.num_chairs: int = num_chairs
         self.morning_hourly_capacity: int = morning_hourly_capacity
         self.afternoon_hourly_capacity: int = afternoon_hourly_capacity
@@ -84,7 +81,7 @@ class CTDepartment:
         self.sim.on_after_event(self._check_batch)
         
 
-        self.currently_scanning: list[Patient] = [] # patients that are currently being scanned. Can be at most :num_scanners:
+        self.currently_scanning: list[Patient] = [] # patients that are currently being scanned.
         self.queue: list[Patient] = [] # patients currently waiting in waiting room
         self.inpatient_waiting_list: list[Patient] = [] # inpatients who have called today but do not find an empty room.
         
@@ -201,12 +198,22 @@ class CTDepartment:
         self.queue.insert(idx, patient)
 
         is_weekend = self.day_of_week == 5 or self.day_of_week == 6
-        is_office_hours: bool = 8 <= (now / 60) % 24 <= 16 and not is_weekend
-        if is_office_hours:
-            while self.queue and len(self.currently_scanning) < self.num_scanners:
+        hour = now / 60 % 24
+        is_morning: bool = 8 <= hour <= 12
+        is_afternoon: bool = 12 < hour <= 16
+        is_office_hours: bool = (is_morning or is_afternoon) and not is_weekend
+        
+        argument = len(self.outpatient_waiting_list)
+        schedule = self.scanner_schedule(argument)[self.day_of_week] # (morning, afternoon, night)
+        
+        if is_morning and is_office_hours:
+            while self.queue and len(self.currently_scanning) < schedule[0]:
+                self.start_scanning(self.queue[0], now, sim)
+        elif is_afternoon and is_office_hours:
+            while self.queue and len(self.currently_scanning) < schedule[1]:
                 self.start_scanning(self.queue[0], now, sim)
         else:
-            while self.queue and len(self.currently_scanning) < self.num_scanners_night:
+            while self.queue and len(self.currently_scanning) < schedule[2]:
                 self.start_scanning(self.queue[0], now, sim)
 
         self.statistics["Queue size"].update(now, len(self.queue))
@@ -224,12 +231,21 @@ class CTDepartment:
         self.currently_scanning.append(patient)
         
         office_time = self.calculate_office_time(now)
-        is_office_hours = 8 <= now / 60 % 24 <= 16 and self.day_of_week < 5
-        if is_office_hours:
-            self.statistics["Scanner utilization in office hours"].update(now, len(self.currently_scanning) / self.num_scanners)
+        hour = now / 60 % 24
+        is_weekend = self.day_of_week < 5
+        is_morning = 8 <= hour <= 12
+        is_afternoon = 12 < hour <= 16
+        is_office_hours = (is_morning or is_afternoon) and not is_weekend
+        
+        argument = len(self.outpatient_waiting_list)
+        schedule = self.scanner_schedule(argument)[self.day_of_week] # (morning, afternoon, night)
+        
+        if is_morning and is_office_hours:
+            self.statistics["Scanner utilization in office hours"].update(now, len(self.currently_scanning) / schedule[0])
+        elif is_afternoon and is_office_hours:
+            self.statistics["Scanner utilization in office hours"].update(now, len(self.currently_scanning) / schedule[1])
         else:
-            self.statistics["Scanner utilization outside office hours"].update(now, len(self.currently_scanning) / self.num_scanners_night)
-
+            self.statistics["Scanner utilization outside office hours"].update(now, len(self.currently_scanning) / schedule[2])
         patient.start_scanning_time = now
 
         self.statistics["Waiting time"].record(now, now - patient.arrival_time)
@@ -529,23 +545,33 @@ class EndScan(Event):
         m.num_scanned_patients.increment()
         
         hour = self.time / 60 % 24
-        is_weekend: bool = m.day_of_week == 5 or m.day_of_week == 6
-        is_office_hours: bool = 8 <= hour <= 16 and not is_weekend
+        
+        is_weekend: bool = m.day_of_week < 5
+        is_morning: bool = 8 <= hour <= 12
+        is_afternoon: bool = 12 < hour <= 16
+        is_office_hours: bool = (is_morning or is_afternoon) and not is_weekend
+        
+        argument = len(m.outpatient_waiting_list)
+        schedule = m.scanner_schedule(argument)[m.day_of_week] # (morning, afternoon, night)
         
         m.currently_scanning.remove(self.patient)
         
         if m.queue:
-            if is_office_hours and len(m.currently_scanning) < m.num_scanners:
+            if is_morning and is_office_hours and len(m.currently_scanning) < schedule[0]:
                 m.start_scanning(m.queue[0], self.time, sim)
-            elif not is_office_hours and len(m.currently_scanning) < m.num_scanners_night:
+            elif is_afternoon and is_office_hours and len(m.currently_scanning) < schedule[1]:
+                m.start_scanning(m.queue[0], self.time, sim)
+            elif not is_office_hours and len(m.currently_scanning) < schedule[2]:
                 m.start_scanning(m.queue[0], self.time, sim)
 
         office_time = m.calculate_office_time(self.time)
         
-        if is_office_hours:
-            m.statistics["Scanner utilization in office hours"].update(self.time, len(m.currently_scanning) / m.num_scanners)
+        if is_office_hours and is_morning:
+            m.statistics["Scanner utilization in office hours"].update(self.time, len(m.currently_scanning) / schedule[0])
+        elif is_office_hours and is_afternoon:
+            m.statistics["Scanner utilization in office hours"].update(self.time, len(m.currently_scanning) / schedule[1])
         else:
-            m.statistics["Scanner utilization outside office hours"].update(self.time, len(m.currently_scanning) / m.num_scanners_night)
+            m.statistics["Scanner utilization outside office hours"].update(self.time, len(m.currently_scanning) / schedule[2])
 
 if __name__ == "__main__":
     stopping_time = 1e7
@@ -553,19 +579,36 @@ if __name__ == "__main__":
     # compare M/G/1 model (service time B ~ U[10,19]) with simulated results: Wq = ~2.3846 min, Lq = ~0.0397, W = ~16.88 min, L = ~0.2814
     # M/G/2: Wq = 0.111, Lq = 0.00185
     c = 1
-    # mgc_model = CTDepartment(num_scanners=c, num_scanners_night=c, do_schedule_inpatients=False, do_schedule_outpatients=False, stopping_time=stopping_time, progress_bar=tqdm(total=stopping_time, bar_format = "{desc}: {bar}| {percentage:.2f}% | [{elapsed}s]"))
+    # mgc_model = CTDepartment(do_schedule_inpatients=False, do_schedule_outpatients=False, stopping_time=stopping_time, progress_bar=tqdm(total=stopping_time, bar_format = "{desc}: {bar}| {percentage:.2f}% | [{elapsed}s]"))
     # mgc_model.run()
     # mgc_model.report()
     
     # M/M/1: Wq = 5.0, Lq = 0.08333...
     # M/M/2: Wq = 0.2381, Lq = 0.00397
-    # mmc_model = CTDepartment(num_scanners=c, num_scanners_night=c, service_time_distr=random.expovariate, service_time_param=(1/15,), do_schedule_inpatients=False, do_schedule_outpatients=False, stopping_time=stopping_time, progress_bar=tqdm(total=stopping_time, bar_format = "{desc}: {bar}| {percentage:.2f}% | [{elapsed}s]"))
+    # mmc_model = CTDepartment(service_time_distr=random.expovariate, service_time_param=(1/15,), do_schedule_inpatients=False, do_schedule_outpatients=False, stopping_time=stopping_time, progress_bar=tqdm(total=stopping_time, bar_format = "{desc}: {bar}| {percentage:.2f}% | [{elapsed}s]"))
     # mmc_model.run()
     # mmc_model.report()
     # mmc_model.validate_num_batches()
     
-    model = CTDepartment(num_scanners=2, num_scanners_night=1, warmup_period=0.0, num_batches=50, stopping_time=stopping_time, progress_bar=tqdm(total=stopping_time, bar_format = "{desc}: {bar}| {percentage:.2f}% | [{elapsed}s]"))
-    model.run()
-    model.report()
+    no_blueprint = lambda _: {i : (2,2,2) for i in range(7)}
+    naive_model = CTDepartment(scanner_schedule=no_blueprint, num_batches=50, stopping_time=stopping_time, progress_bar=tqdm(total=stopping_time, bar_format = "{desc}: {bar}| {percentage:.2f}% | [{elapsed}s]"))
+    naive_model.run()
+    naive_model.report()
+    
+    # fixed_blueprint = lambda _: {i: (2,2,1) for i in range(7)}
+    # model = CTDepartment(scanner_schedule=fixed_blueprint, num_batches=50, stopping_time=stopping_time, progress_bar=tqdm(total=stopping_time, bar_format = "{desc}: {bar}| {percentage:.2f}% | [{elapsed}s]"))
+    # model.run()
+    # model.report()
     # model.validate_num_batches(precision=0.1)
     # model.validate_warmup()
+    
+    # dynamic_blueprint = lambda w: {
+    #     i: (2,2,1) if i <= 2 else (2,1,1) for i in range(7)
+    #     } if w <= 2 else {
+    #         i: (2,2,1) if i <= 3 else (2,1,1) for i in range(7)
+    #     } if w <= 18 else {
+    #         i: (2,2,1) for i in range(7)
+    #     }
+    # dyn_model = CTDepartment(scanner_schedule=dynamic_blueprint, stopping_time=stopping_time, progress_bar=tqdm(total=stopping_time, bar_format = "{desc}: {bar}| {percentage:.2f}% | [{elapsed}s]"))
+    # dyn_model.run()
+    # dyn_model.report()
