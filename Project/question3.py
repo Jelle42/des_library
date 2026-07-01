@@ -117,7 +117,7 @@ if __name__ == "__main__":
     params = {"r_O": 100, "r_I": 20, "w_O": 1.5, "w_I": 0, "pi_O": 10, "pi_I": 200}
  
     MAX_N_SEARCH = 10
-    k = 18
+    k = 16
  
     t0 = time.time()
     best_on, best_val, cache = local_search(

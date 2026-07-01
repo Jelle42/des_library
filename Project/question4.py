@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 from typing import Callable
+from pathlib import Path
 import random
 import dpsolver as dp
 from tqdm import tqdm
@@ -111,12 +112,19 @@ if __name__ == "__main__":
     inpatient_arrival_rate: Callable[[float], float] = lambda t: 3 / 8 + 3 * (1 - np.cos(2 * np.pi / 3 * (t - 9))) if 9 <= t <= 15 else 3 / 8
     c = compute_c(inpatient_arrival_rate) 
     print("c computed")
-    sdp, known_vals = setup_sdp(c, outpatient_schedule={i: 0 if random.random() < 0.5 else 1 for i in range(33)}, max_n=40)
+    sched = {1, 2, 11, 12, 13, 14, 15, 16, 17, 18, 20, 21, 28, 30, 31, 32}
+    sdp, known_vals = setup_sdp(c, outpatient_schedule={i: 1 if i in sched else 0 for i in range(33)}, max_n=40)
     print("sdp created")
     for state in tqdm(sdp.state_space):
         sdp.f(state, 0, known_vals)
     print("sdp solved")
+
+    results = []
     for (state, stage), decision in sdp.optimal_decisions.items():
-        if stage != 0: continue
-        if decision != "In": continue
-        print(f"f_{stage}{state} = {sdp.computed_values[(state, stage)]}, decision: {decision}")
+        line = f"f_{stage}{state} = {sdp.computed_values[(state, stage)]}, decision: {decision}"
+        print(line)
+        results.append(line)
+
+    output_path = Path(__file__).with_name("sdp_results.txt")
+    output_path.write_text("\n".join(results) + "\n", encoding="utf-8")
+    print(f"Saved {len(results)} results to {output_path}")
